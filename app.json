@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "SaveMyDish",
+    "slug": "savemydish",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": ["**/*"],
+    "android": {
+      "package": "com.savemydish.app"
+    }
+  }
+}
