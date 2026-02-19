@@ -92,6 +92,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
   const [isRecipeCookbookPickerOpen, setIsRecipeCookbookPickerOpen] = useState(false);
   const [recipeCookbookSelectionIds, setRecipeCookbookSelectionIds] = useState([]);
   const [isSavingRecipeCookbookSelection, setIsSavingRecipeCookbookSelection] = useState(false);
+  const [isAddingRecipeToOwnCookbooks, setIsAddingRecipeToOwnCookbooks] = useState(false);
   const [isRecipeListPickerOpen, setIsRecipeListPickerOpen] = useState(false);
   const [recipeListIngredients, setRecipeListIngredients] = useState([]);
   const [selectedRecipeListIngredientKeys, setSelectedRecipeListIngredientKeys] = useState([]);
@@ -1779,102 +1780,121 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
         </View>
 
         {!isEditingRecipeDetail ? (
-          <View style={styles.recipeViewActionsCard}>
-            <View style={styles.recipeViewActionsHeader}>
-              <TouchableOpacity
-                style={styles.recipeCookedToggleButton}
-                activeOpacity={0.8}
-                onPress={() => {
+          canEditSelectedRecipe ? (
+            <View style={styles.recipeViewActionsCard}>
+              <View style={styles.recipeViewActionsHeader}>
+                <TouchableOpacity
+                  style={styles.recipeCookedToggleButton}
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    if (!selectedRecipeIdKey) {
+                      return;
+                    }
+                    const nextIsCooked = !isRecipeMarkedCooked;
+                    setRecipeCookedById((prevValue) => ({
+                      ...prevValue,
+                      [selectedRecipeIdKey]: nextIsCooked,
+                    }));
+                    void persistRecipeViewFeedback(selectedRecipeIdKey, {
+                      is_cooked: nextIsCooked,
+                      rating: recipeRating,
+                      note: recipeNote,
+                    });
+                  }}
+                >
+                  <Text style={styles.recipeCookedToggleText}>Marcar como cocinado</Text>
+                  <View
+                    style={[
+                      styles.recipeCookedToggleIconWrap,
+                      isRecipeMarkedCooked && styles.recipeCookedToggleIconWrapActive,
+                    ]}
+                  >
+                    <Ionicons
+                      name="checkmark"
+                      size={14}
+                      color={isRecipeMarkedCooked ? palette.card : '#AFAAA2'}
+                    />
+                  </View>
+                </TouchableOpacity>
+
+                <View style={styles.recipeRatingStarsWrap}>
+                  {[1, 2, 3, 4, 5].map((value) => (
+                    <TouchableOpacity
+                      key={`recipe-rating-${value}`}
+                      activeOpacity={0.75}
+                      onPress={() => {
+                        if (!selectedRecipeIdKey) {
+                          return;
+                        }
+                        const nextRating = recipeRating === value ? 0 : value;
+                        setRecipeRatingById((prevValue) => ({
+                          ...prevValue,
+                          [selectedRecipeIdKey]: nextRating,
+                        }));
+                        void persistRecipeViewFeedback(selectedRecipeIdKey, {
+                          is_cooked: isRecipeMarkedCooked,
+                          rating: nextRating,
+                          note: recipeNote,
+                        });
+                      }}
+                    >
+                      <Ionicons
+                        name={value <= recipeRating ? 'star' : 'star-outline'}
+                        size={18}
+                        color={value <= recipeRating ? '#C7B073' : '#DDD8D0'}
+                      />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              <TextInput
+                style={styles.recipeCookedNoteInput}
+                value={recipeNote}
+                onChangeText={(value) => {
                   if (!selectedRecipeIdKey) {
                     return;
                   }
-                  const nextIsCooked = !isRecipeMarkedCooked;
-                  setRecipeCookedById((prevValue) => ({
+                  setRecipeNoteById((prevValue) => ({
                     ...prevValue,
-                    [selectedRecipeIdKey]: nextIsCooked,
+                    [selectedRecipeIdKey]: value,
                   }));
+                }}
+                placeholder="Añadir nota"
+                placeholderTextColor="#AFAAA2"
+                multiline
+                textAlignVertical="top"
+                onEndEditing={() => {
+                  if (!selectedRecipeIdKey) {
+                    return;
+                  }
+
                   void persistRecipeViewFeedback(selectedRecipeIdKey, {
-                    is_cooked: nextIsCooked,
+                    is_cooked: isRecipeMarkedCooked,
                     rating: recipeRating,
                     note: recipeNote,
                   });
                 }}
-              >
-                <Text style={styles.recipeCookedToggleText}>Marcar como cocinado</Text>
-                <View
-                  style={[
-                    styles.recipeCookedToggleIconWrap,
-                    isRecipeMarkedCooked && styles.recipeCookedToggleIconWrapActive,
-                  ]}
-                >
-                  <Ionicons
-                    name="checkmark"
-                    size={14}
-                    color={isRecipeMarkedCooked ? palette.card : '#AFAAA2'}
-                  />
-                </View>
-              </TouchableOpacity>
-
-              <View style={styles.recipeRatingStarsWrap}>
-                {[1, 2, 3, 4, 5].map((value) => (
-                  <TouchableOpacity
-                    key={`recipe-rating-${value}`}
-                    activeOpacity={0.75}
-                    onPress={() => {
-                      if (!selectedRecipeIdKey) {
-                        return;
-                      }
-                      const nextRating = recipeRating === value ? 0 : value;
-                      setRecipeRatingById((prevValue) => ({
-                        ...prevValue,
-                        [selectedRecipeIdKey]: nextRating,
-                      }));
-                      void persistRecipeViewFeedback(selectedRecipeIdKey, {
-                        is_cooked: isRecipeMarkedCooked,
-                        rating: nextRating,
-                        note: recipeNote,
-                      });
-                    }}
-                  >
-                    <Ionicons
-                      name={value <= recipeRating ? 'star' : 'star-outline'}
-                      size={18}
-                      color={value <= recipeRating ? '#C7B073' : '#DDD8D0'}
-                    />
-                  </TouchableOpacity>
-                ))}
-              </View>
+              />
             </View>
-
-            <TextInput
-              style={styles.recipeCookedNoteInput}
-              value={recipeNote}
-              onChangeText={(value) => {
-                if (!selectedRecipeIdKey) {
-                  return;
-                }
-                setRecipeNoteById((prevValue) => ({
-                  ...prevValue,
-                  [selectedRecipeIdKey]: value,
-                }));
-              }}
-              placeholder="Añadir nota"
-              placeholderTextColor="#AFAAA2"
-              multiline
-              textAlignVertical="top"
-              onEndEditing={() => {
-                if (!selectedRecipeIdKey) {
-                  return;
-                }
-
-                void persistRecipeViewFeedback(selectedRecipeIdKey, {
-                  is_cooked: isRecipeMarkedCooked,
-                  rating: recipeRating,
-                  note: recipeNote,
-                });
-              }}
-            />
-          </View>
+          ) : (
+            <View style={styles.recipeViewActionsCard}>
+              <Text style={styles.recipeExternalHint}>
+                Esta receta es pública de otro usuario. Cópiala a tus recetas para editarla o organizarla.
+              </Text>
+              <TouchableOpacity
+                style={[styles.recipeAdoptButton, isAddingRecipeToOwnCookbooks && styles.buttonDisabled]}
+                onPress={() => {
+                  void handleAddRecipeToOwnCookbooks();
+                }}
+                disabled={isAddingRecipeToOwnCookbooks}
+              >
+                <Text style={styles.recipeAdoptButtonText}>
+                  {isAddingRecipeToOwnCookbooks ? 'Agregando...' : 'Agregar a mis recetarios'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )
         ) : null}
 
         {isEditingRecipeDetail ? (
@@ -1895,34 +1915,35 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
         ) : null}
 
         <View style={styles.recipeDetailBody}>
-          <View style={styles.manualQuickActionsRow}>
-            <TouchableOpacity
-              style={styles.manualQuickAction}
-              onPress={handleOpenRecipeCookbookPicker}
-            >
-              <View style={styles.manualQuickActionIcon}>
-                <Ionicons name="book-outline" size={20} color={palette.accent} />
-              </View>
-              <Text style={styles.manualQuickActionText}>Recetarios</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.manualQuickAction}
-              onPress={handleOpenPlanFromRecipeDetail}
-            >
-              <View style={styles.manualQuickActionIcon}>
-                <Ionicons name="calendar-outline" size={20} color={palette.accent} />
-              </View>
-              <Text style={styles.manualQuickActionText}>Plan</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.manualQuickAction}
-              onPress={handleOpenRecipeListPicker}
-            >
-              <View style={styles.manualQuickActionIcon}>
-                <Ionicons name="basket-outline" size={20} color={palette.accent} />
-              </View>
-              <Text style={styles.manualQuickActionText}>Lista</Text>
-            </TouchableOpacity>
+          {canEditSelectedRecipe ? (
+            <View style={styles.manualQuickActionsRow}>
+              <TouchableOpacity
+                style={styles.manualQuickAction}
+                onPress={handleOpenRecipeCookbookPicker}
+              >
+                <View style={styles.manualQuickActionIcon}>
+                  <Ionicons name="book-outline" size={20} color={palette.accent} />
+                </View>
+                <Text style={styles.manualQuickActionText}>Recetarios</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.manualQuickAction}
+                onPress={handleOpenPlanFromRecipeDetail}
+              >
+                <View style={styles.manualQuickActionIcon}>
+                  <Ionicons name="calendar-outline" size={20} color={palette.accent} />
+                </View>
+                <Text style={styles.manualQuickActionText}>Plan</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.manualQuickAction}
+                onPress={handleOpenRecipeListPicker}
+              >
+                <View style={styles.manualQuickActionIcon}>
+                  <Ionicons name="basket-outline" size={20} color={palette.accent} />
+                </View>
+                <Text style={styles.manualQuickActionText}>Lista</Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={styles.manualQuickAction}
                 onPress={() => {
@@ -1936,8 +1957,26 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
                   <Ionicons name="share-social-outline" size={20} color={palette.accent} />
                 </View>
                 <Text style={styles.manualQuickActionText}>Compartir</Text>
-            </TouchableOpacity>
-          </View>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.manualQuickActionsRowSingle}>
+              <TouchableOpacity
+                style={styles.manualQuickAction}
+                onPress={() => {
+                  void handleShareRecipeLink(
+                    selectedRecipeForView?.name || recipeDetailDraft?.title || 'Receta',
+                    setRecipeDetailFeedback
+                  );
+                }}
+              >
+                <View style={styles.manualQuickActionIcon}>
+                  <Ionicons name="share-social-outline" size={20} color={palette.accent} />
+                </View>
+                <Text style={styles.manualQuickActionText}>Compartir</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {isEditingRecipeDetail || recipeDetailDraft.description ? (
             <View style={styles.recipeDetailDescriptionWrap}>
@@ -4054,6 +4093,107 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     setIsSavingRecipeCookbookSelection(false);
     setIsRecipeCookbookPickerOpen(false);
     setRecipeDetailFeedback('Recetarios actualizados correctamente.');
+  };
+
+  const handleAddRecipeToOwnCookbooks = async () => {
+    if (!supabase || !isSupabaseConfigured || !userId || !selectedRecipeForView) {
+      setRecipeDetailFeedback('Debes iniciar sesión para guardar esta receta en tus recetarios.');
+      return;
+    }
+
+    if (canEditSelectedRecipe) {
+      handleOpenRecipeCookbookPicker();
+      return;
+    }
+
+    if (isAddingRecipeToOwnCookbooks) {
+      return;
+    }
+
+    setIsAddingRecipeToOwnCookbooks(true);
+    setRecipeDetailFeedback('');
+
+    try {
+      const detailedRecipe = await ensureRecipeDetailsLoaded(selectedRecipeForView);
+      const recipeName = String(detailedRecipe?.name || recipeDetailDraft.title || '').trim();
+      if (!recipeName) {
+        setRecipeDetailFeedback('No se pudo copiar la receta porque no tiene nombre.');
+        return;
+      }
+
+      const cleanIngredients = (recipeDetailDraft.ingredients || [])
+        .map((item) => String(item || '').trim())
+        .filter((item) => item.length > 0);
+      const cleanSteps = normalizeRecipeSteps(detailedRecipe?.steps, detailedRecipe?.instructions);
+      const normalizedStepPhotos = normalizeRecipeStepPhotos(
+        detailedRecipe?.additional_photos,
+        cleanSteps.length > 0 ? cleanSteps.length : 1
+      )
+        .map((url) => String(url || '').trim())
+        .filter((url) => url.length > 0);
+
+      const descriptionToSave = composeRecipeDescription(recipeDetailDraft.description, cleanIngredients);
+      const sourceUrl = String(detailedRecipe?.source_url || '').trim();
+      const { data: insertedRecipe, error: insertError } = await supabase
+        .from('recipes')
+        .insert({
+          owner_user_id: userId,
+          name: recipeName,
+          description: descriptionToSave || String(detailedRecipe?.description || '').trim() || '',
+          main_photo_url: String(detailedRecipe?.main_photo_url || '').trim() || null,
+          additional_photos: normalizedStepPhotos,
+          steps: cleanSteps,
+          instructions: cleanSteps.join('\n'),
+          is_public: false,
+          source_url: sourceUrl || null,
+        })
+        .select('id, owner_user_id, name, description, main_photo_url, additional_photos, steps, instructions, is_public, source_url')
+        .single();
+
+      if (insertError || !insertedRecipe) {
+        setRecipeDetailFeedback(insertError?.message || 'No se pudo copiar la receta.');
+        return;
+      }
+
+      const refreshedCookbooks = await loadCookbooks({ force: true });
+      let parentCookbook = null;
+      let syncedRecipe = insertedRecipe;
+      let hasOwnCookbooksAvailable = ownCookbooks.length > 0;
+
+      if (Array.isArray(refreshedCookbooks)) {
+        const nextOwnCookbooks = refreshedCookbooks.filter((cookbook) => cookbook.owner_user_id === userId);
+        hasOwnCookbooksAvailable = nextOwnCookbooks.length > 0;
+        parentCookbook = refreshedCookbooks.find((cookbook) =>
+          (cookbook.recipes || []).some((recipe) => String(recipe.id) === String(insertedRecipe.id))
+        );
+        const recipeFromCookbooks = findRecipeAcrossCookbooks(refreshedCookbooks, insertedRecipe.id);
+        if (recipeFromCookbooks) {
+          syncedRecipe = {
+            ...insertedRecipe,
+            ...recipeFromCookbooks,
+          };
+        }
+      }
+
+      recipeDetailsCacheRef.current[String(syncedRecipe.id)] = syncedRecipe;
+      setSelectedCookbookForView(parentCookbook || null);
+      setCookbookRenameInput(parentCookbook?.name || '');
+      setSelectedRecipeForView(syncedRecipe);
+      setRecipeDetailDraft(buildRecipeDetailDraft(syncedRecipe));
+      setRecipeDetailMode('view');
+      setIsRecipeStepReorderMode(false);
+      setDraggingRecipeStepIndex(null);
+
+      if (hasOwnCookbooksAvailable) {
+        setRecipeCookbookSelectionIds([]);
+        setIsRecipeCookbookPickerOpen(true);
+        setRecipeDetailFeedback('Receta copiada correctamente. Elige los recetarios donde deseas guardarla.');
+      } else {
+        setRecipeDetailFeedback('Receta copiada a tus recetas. Crea un recetario para organizarla.');
+      }
+    } finally {
+      setIsAddingRecipeToOwnCookbooks(false);
+    }
   };
 
   const handleOpenRecipeListPicker = () => {
@@ -6741,6 +6881,26 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     marginBottom: spacing.md,
   },
+  recipeExternalHint: {
+    color: palette.mutedText,
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  recipeAdoptButton: {
+    borderRadius: 12,
+    backgroundColor: palette.accent,
+    minHeight: 42,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeAdoptButtonText: {
+    color: palette.card,
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+  },
   recipeViewActionsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -7586,6 +7746,11 @@ const styles = StyleSheet.create({
   manualQuickActionsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  manualQuickActionsRowSingle: {
+    flexDirection: 'row',
+    justifyContent: 'center',
     marginBottom: spacing.md,
   },
   manualVisibilityToggle: {
