@@ -8,8 +8,10 @@ import {
   KeyboardAvoidingView,
   Linking,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
+  Share,
   ScrollView,
   StyleSheet,
   Text,
@@ -21,6 +23,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as ExpoClipboard from 'expo-clipboard';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { fonts, palette, spacing } from '../theme';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
@@ -75,6 +79,12 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
   const [recipeDetailMode, setRecipeDetailMode] = useState('view');
   const [recipeDetailFeedback, setRecipeDetailFeedback] = useState('');
   const [isSavingRecipeDetail, setIsSavingRecipeDetail] = useState(false);
+  const [isDeletingRecipe, setIsDeletingRecipe] = useState(false);
+  const [isRecipeStepReorderMode, setIsRecipeStepReorderMode] = useState(false);
+  const [draggingRecipeStepIndex, setDraggingRecipeStepIndex] = useState(null);
+  const [isRecipeMoreDropdownOpen, setIsRecipeMoreDropdownOpen] = useState(false);
+  const [isRecipeMoreMenuOpen, setIsRecipeMoreMenuOpen] = useState(false);
+  const [isRecipeDeleteConfirmOpen, setIsRecipeDeleteConfirmOpen] = useState(false);
   const [isRecipeCookbookPickerOpen, setIsRecipeCookbookPickerOpen] = useState(false);
   const [recipeCookbookSelectionIds, setRecipeCookbookSelectionIds] = useState([]);
   const [isSavingRecipeCookbookSelection, setIsSavingRecipeCookbookSelection] = useState(false);
@@ -111,6 +121,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     description: '',
     ingredients: [''],
     steps: [''],
+    stepPhotos: [''],
     mainPhotoUrl: '',
     isPublic: false,
   });
@@ -132,6 +143,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
   const [recipeNoteById, setRecipeNoteById] = useState({});
   const ingredientInputRefs = useRef([]);
   const stepInputRefs = useRef([]);
+  const stepDragStateRef = useRef({ currentIndex: -1, lastSwapTs: 0 });
   const tabContentOpacity = useRef(new Animated.Value(1)).current;
   const tabContentTranslateY = useRef(new Animated.Value(0)).current;
   const sheetBackdropOpacity = useRef(new Animated.Value(0)).current;
@@ -279,6 +291,17 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
       return null;
     }
 
+    const buildPreviewRecipes = (recipes = []) => {
+      const recipesWithPhoto = recipes.filter((recipe) =>
+        Boolean(String(recipe?.main_photo_url || '').trim())
+      );
+      const recipesWithoutPhoto = recipes.filter(
+        (recipe) => !Boolean(String(recipe?.main_photo_url || '').trim())
+      );
+
+      return [...recipesWithPhoto, ...recipesWithoutPhoto].slice(0, 3);
+    };
+
     const normalizedCookbooks = (data || []).map((cookbook) => {
       const links = Array.isArray(cookbook.cookbook_recipes) ? cookbook.cookbook_recipes : [];
       const recipes = links
@@ -297,7 +320,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
         ...cookbook,
         recipeCount: recipes.length,
         recipes,
-        previewRecipes: recipes.slice(0, 3),
+        previewRecipes: buildPreviewRecipes(recipes),
       };
     });
 
@@ -340,7 +363,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
               name: 'Sin Recetario',
               recipeCount: recipesWithoutCookbook.length,
               recipes: recipesWithoutCookbook,
-              previewRecipes: recipesWithoutCookbook.slice(0, 3),
+              previewRecipes: buildPreviewRecipes(recipesWithoutCookbook),
             },
             ]
         : normalizedCookbooks;
@@ -582,15 +605,38 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     return [];
   };
 
+  const normalizeRecipeStepPhotos = (additionalPhotos, stepCount) => {
+    let sourcePhotos = additionalPhotos;
+    if (typeof additionalPhotos === 'string') {
+      try {
+        const parsed = JSON.parse(additionalPhotos);
+        sourcePhotos = Array.isArray(parsed) ? parsed : [];
+      } catch (_error) {
+        sourcePhotos = [];
+      }
+    }
+
+    const normalizedSource = Array.isArray(sourcePhotos)
+      ? sourcePhotos.map((item) => String(item || '').trim())
+      : [];
+    const targetCount = Math.max(1, Number(stepCount) || 0);
+    return Array.from({ length: targetCount }, (_, index) => normalizedSource[index] || '');
+  };
+
   const buildRecipeDetailDraft = (recipe) => {
     const { descriptionText, ingredients } = splitRecipeDescription(recipe?.description || '');
     const normalizedSteps = normalizeRecipeSteps(recipe?.steps, recipe?.instructions);
+    const normalizedStepPhotos = normalizeRecipeStepPhotos(
+      recipe?.additional_photos,
+      normalizedSteps.length > 0 ? normalizedSteps.length : 1
+    );
 
     return {
       title: recipe?.name || '',
       description: descriptionText,
       ingredients: ingredients.length > 0 ? ingredients : [''],
       steps: normalizedSteps.length > 0 ? normalizedSteps : [''],
+      stepPhotos: normalizedStepPhotos,
       mainPhotoUrl: recipe?.main_photo_url || '',
       isPublic: Boolean(recipe?.is_public),
     };
@@ -625,7 +671,9 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
 
     const { data, error } = await supabase
       .from('recipes')
-      .select('id, owner_user_id, name, description, main_photo_url, steps, instructions, is_public, source_url')
+      .select(
+        'id, owner_user_id, name, description, main_photo_url, additional_photos, steps, instructions, is_public, source_url'
+      )
       .eq('id', recipeId)
       .single();
 
@@ -1320,6 +1368,161 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     loadRecipeViewFeedback(selectedRecipeForView.id);
   }, [loadRecipeViewFeedback, recipeDetailMode, selectedRecipeForView?.id]);
 
+  const escapeRecipePdfHtml = (value) =>
+    String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+  const handleExportRecipePdf = async () => {
+    if (!selectedRecipeForView) {
+      return;
+    }
+
+    const recipeTitle = String(recipeDetailDraft.title || selectedRecipeForView.name || 'Receta').trim() || 'Receta';
+    const recipeDescription = String(recipeDetailDraft.description || '').trim();
+    const recipeIngredients = (recipeDetailDraft.ingredients || [])
+      .map((item) => String(item || '').trim())
+      .filter((item) => item.length > 0);
+    const recipeSteps = (recipeDetailDraft.steps || [])
+      .map((item) => String(item || '').trim())
+      .filter((item) => item.length > 0);
+
+    const ingredientsHtml = recipeIngredients
+      .map((item) => `<li>${escapeRecipePdfHtml(item)}</li>`)
+      .join('');
+    const stepsHtml = recipeSteps
+      .map((item) => `<li>${escapeRecipePdfHtml(item)}</li>`)
+      .join('');
+
+    const html = `
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+              padding: 28px;
+              color: #111827;
+              line-height: 1.45;
+            }
+            .title {
+              margin: 0 0 12px 0;
+              font-size: 30px;
+              font-weight: 700;
+            }
+            .section-title {
+              margin: 18px 0 8px 0;
+              font-size: 16px;
+              font-weight: 700;
+            }
+            p { margin: 0; font-size: 14px; }
+            li { font-size: 14px; margin-bottom: 6px; }
+            ul, ol { margin: 8px 0 0 20px; padding: 0; }
+            .footer {
+              margin-top: 24px;
+              font-size: 11px;
+              color: #6B7280;
+            }
+          </style>
+        </head>
+        <body>
+          <h1 class="title">${escapeRecipePdfHtml(recipeTitle)}</h1>
+          <h2 class="section-title">Descripción</h2>
+          <p>${escapeRecipePdfHtml(recipeDescription || 'Sin descripción.')}</p>
+          <h2 class="section-title">Ingredientes</h2>
+          ${recipeIngredients.length > 0 ? `<ul>${ingredientsHtml}</ul>` : '<p>Sin ingredientes.</p>'}
+          <h2 class="section-title">Pasos</h2>
+          ${recipeSteps.length > 0 ? `<ol>${stepsHtml}</ol>` : '<p>Sin pasos.</p>'}
+          <p class="footer">Generado por SaveMyDish</p>
+        </body>
+      </html>
+    `;
+
+    try {
+      const { uri } = await Print.printToFileAsync({ html });
+
+      if (Platform.OS !== 'web' && (await Sharing.isAvailableAsync())) {
+        await Sharing.shareAsync(uri, {
+          mimeType: 'application/pdf',
+          dialogTitle: 'Compartir receta en PDF',
+          UTI: 'com.adobe.pdf',
+        });
+      } else {
+        await Share.share({
+          message: `Receta: ${recipeTitle}`,
+          url: uri,
+        });
+      }
+
+      setRecipeDetailFeedback('PDF generado correctamente.');
+    } catch (_error) {
+      setRecipeDetailFeedback('No se pudo exportar PDF.');
+    }
+  };
+
+  const handleDeleteSelectedRecipe = async () => {
+    if (!supabase || !isSupabaseConfigured || !selectedRecipeForView?.id || !canEditSelectedRecipe) {
+      return;
+    }
+
+    const cookbookIdToKeep = selectedCookbookForView?.id;
+    setIsDeletingRecipe(true);
+    setRecipeDetailFeedback('');
+    const recipeId = selectedRecipeForView.id;
+
+    const { error } = await supabase
+      .from('recipes')
+      .delete()
+      .eq('id', recipeId)
+      .eq('owner_user_id', userId);
+
+    if (error) {
+      setIsDeletingRecipe(false);
+      setRecipeDetailFeedback('No se pudo borrar la receta.');
+      return;
+    }
+
+    const feedbackKey = String(recipeId);
+    delete recipeDetailsCacheRef.current[feedbackKey];
+    setRecipeCookedById((prevValue) => {
+      const nextValue = { ...prevValue };
+      delete nextValue[feedbackKey];
+      return nextValue;
+    });
+    setRecipeRatingById((prevValue) => {
+      const nextValue = { ...prevValue };
+      delete nextValue[feedbackKey];
+      return nextValue;
+    });
+    setRecipeNoteById((prevValue) => {
+      const nextValue = { ...prevValue };
+      delete nextValue[feedbackKey];
+      return nextValue;
+    });
+
+    closeRecipeDetailView();
+    await refreshCookbooksAndSelectedCookbook(cookbookIdToKeep);
+    setIsDeletingRecipe(false);
+    setCookbookViewFeedback('Receta eliminada correctamente.');
+  };
+
+  const handleConfirmDeleteSelectedRecipe = () => {
+    if (!selectedRecipeForView || !canEditSelectedRecipe || isDeletingRecipe) {
+      return;
+    }
+    setIsRecipeDeleteConfirmOpen(true);
+  };
+
+  const handleOpenRecipeMoreOptions = () => {
+    if (!selectedRecipeForView || !canEditSelectedRecipe || isDeletingRecipe) {
+      return;
+    }
+    setIsRecipeMoreDropdownOpen((prevValue) => !prevValue);
+  };
+
   const renderRecipeDetailView = () => {
     const isEditingRecipeDetail = recipeDetailMode === 'edit';
     const recipeSourceUrl = String(selectedRecipeForView?.source_url || '').trim();
@@ -1372,26 +1575,91 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
                 </TouchableOpacity>
               </View>
             ) : (
-              <TouchableOpacity
-                style={styles.recipeDetailEditButton}
-                onPress={handleOpenManualRecipeEditForm}
-              >
-                <Text style={styles.recipeDetailEditButtonText}>Editar</Text>
-              </TouchableOpacity>
+              <View style={styles.recipeDetailEditMenuRow}>
+                <TouchableOpacity
+                  style={[styles.recipeDetailEditButton, isDeletingRecipe && styles.buttonDisabled]}
+                  onPress={() => {
+                    setIsRecipeMoreDropdownOpen(false);
+                    handleOpenManualRecipeEditForm();
+                  }}
+                  disabled={isDeletingRecipe}
+                >
+                  <Text style={styles.recipeDetailEditButtonText}>Editar</Text>
+                </TouchableOpacity>
+                <View style={styles.recipeDetailMoreMenuWrap}>
+                  <TouchableOpacity
+                    style={[styles.recipeDetailMoreButton, isDeletingRecipe && styles.buttonDisabled]}
+                    onPress={handleOpenRecipeMoreOptions}
+                    disabled={isDeletingRecipe}
+                  >
+                    <Ionicons name="ellipsis-horizontal" size={18} color={palette.accent} />
+                  </TouchableOpacity>
+
+                  {isRecipeMoreDropdownOpen ? (
+                    <View style={styles.recipeDetailMoreMenuDropdown}>
+                      <TouchableOpacity
+                        style={styles.recipeDetailMoreMenuItem}
+                        onPress={() => {
+                          setIsRecipeMoreDropdownOpen(false);
+                          void handleExportRecipePdf();
+                        }}
+                        disabled={isDeletingRecipe}
+                      >
+                        <Text style={styles.recipeDetailMoreMenuItemText}>Exportar</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.recipeDetailMoreMenuItem}
+                        onPress={() => {
+                          setIsRecipeMoreDropdownOpen(false);
+                          handleConfirmDeleteSelectedRecipe();
+                        }}
+                        disabled={isDeletingRecipe}
+                      >
+                        <Text
+                          style={[
+                            styles.recipeDetailMoreMenuItemText,
+                            styles.recipeDetailMoreMenuItemTextDanger,
+                          ]}
+                        >
+                          Borrar
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
             )
           ) : null}
         </View>
 
         <View style={styles.recipeDetailHero}>
           {isEditingRecipeDetail ? (
-            <TouchableOpacity
-              style={styles.recipeDetailHeroTouchable}
-              onPress={handlePickRecipeDetailPhoto}
-              activeOpacity={0.9}
-              disabled={isSavingRecipeDetail}
-            >
+            <View style={styles.recipeDetailHeroTouchable}>
               {recipeHeroContent}
-            </TouchableOpacity>
+              <View style={styles.recipeDetailPhotoQuickActions}>
+                <TouchableOpacity
+                  style={[styles.recipeDetailPhotoQuickAction, isSavingRecipeDetail && styles.buttonDisabled]}
+                  onPress={() => {
+                    void handlePickRecipeDetailPhotoFromSource('camera');
+                  }}
+                  disabled={isSavingRecipeDetail}
+                >
+                  <Ionicons name="camera-outline" size={14} color={palette.accent} />
+                  <Text style={styles.recipeDetailPhotoQuickActionText}>Tomar foto</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.recipeDetailPhotoQuickAction, isSavingRecipeDetail && styles.buttonDisabled]}
+                  onPress={() => {
+                    void handlePickRecipeDetailPhoto();
+                  }}
+                  disabled={isSavingRecipeDetail}
+                >
+                  <Ionicons name="images-outline" size={14} color={palette.accent} />
+                  <Text style={styles.recipeDetailPhotoQuickActionText}>Elegir de galería</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           ) : (
             <View style={styles.recipeDetailHeroTouchable}>{recipeHeroContent}</View>
           )}
@@ -1505,7 +1773,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
                 >
                   <Ionicons
                     name="checkmark"
-                    size={18}
+                    size={14}
                     color={isRecipeMarkedCooked ? palette.card : '#AFAAA2'}
                   />
                 </View>
@@ -1534,7 +1802,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
                   >
                     <Ionicons
                       name={value <= recipeRating ? 'star' : 'star-outline'}
-                      size={24}
+                      size={18}
                       color={value <= recipeRating ? '#C7B073' : '#DDD8D0'}
                     />
                   </TouchableOpacity>
@@ -1697,44 +1965,165 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
             </TouchableOpacity>
           ) : null}
 
-          <Text style={[styles.manualSectionTitle, styles.manualSectionSpacing]}>Preparación</Text>
-          {recipeDetailDraft.steps.map((item, index) => (
-            <View key={`detail-step-${index}`} style={styles.manualListRow}>
-              {isEditingRecipeDetail ? (
-                <TouchableOpacity
-                  style={[
-                    styles.manualDeleteItemButton,
-                    (recipeDetailDraft.steps.length <= 1 || isSavingRecipeDetail) && styles.buttonDisabled,
-                  ]}
-                  onPress={() => removeRecipeDraftStep(index)}
-                  disabled={recipeDetailDraft.steps.length <= 1 || isSavingRecipeDetail}
-                >
-                  <Ionicons name="remove-circle-outline" size={18} color="#8B9AAA" />
-                </TouchableOpacity>
-              ) : null}
+          <View style={styles.recipeDetailStepsHeaderRow}>
+            <Text style={styles.manualSectionTitle}>Instrucciones</Text>
+            {isEditingRecipeDetail ? (
+              <TouchableOpacity
+                style={styles.recipeDetailReorderButton}
+                onPress={() => {
+                  setIsRecipeStepReorderMode((prevValue) => !prevValue);
+                  setDraggingRecipeStepIndex(null);
+                }}
+                disabled={isSavingRecipeDetail}
+              >
+                <Text style={styles.recipeDetailReorderText}>
+                  {isRecipeStepReorderMode ? 'Listo' : 'Reordenar'}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
 
-              <Text style={styles.manualStepNumber}>{index + 1}.</Text>
-              {isEditingRecipeDetail ? (
-                <TextInput
-                  style={styles.manualListInput}
-                  value={item}
-                  onChangeText={(value) => updateRecipeDraftStep(index, value)}
-                  placeholder="Agregar preparación..."
-                  placeholderTextColor={palette.mutedText}
-                  editable={!isSavingRecipeDetail}
-                />
-              ) : (
-                <Text style={styles.recipeDetailReadText}>{item || '-'}</Text>
-              )}
-            </View>
-          ))}
+          {recipeDetailDraft.steps.map((item, index) => {
+            const stepPhotoUrl = String(recipeDetailDraft.stepPhotos?.[index] || '').trim();
+            const stepDragResponder =
+              isEditingRecipeDetail && isRecipeStepReorderMode
+                ? PanResponder.create({
+                    onStartShouldSetPanResponder: () => !isSavingRecipeDetail,
+                    onMoveShouldSetPanResponder: (_evt, gestureState) =>
+                      !isSavingRecipeDetail && Math.abs(gestureState.dy) > 4,
+                    onPanResponderGrant: () => {
+                      setDraggingRecipeStepIndex(index);
+                      stepDragStateRef.current = { currentIndex: index, lastSwapTs: 0 };
+                    },
+                    onPanResponderMove: (_evt, gestureState) => {
+                      if (isSavingRecipeDetail) {
+                        return;
+                      }
+
+                      const now = Date.now();
+                      const currentDrag = stepDragStateRef.current;
+                      if (now - currentDrag.lastSwapTs < 120) {
+                        return;
+                      }
+
+                      const currentIndex = currentDrag.currentIndex;
+                      if (
+                        gestureState.dy <= -26 &&
+                        currentIndex > 0
+                      ) {
+                        moveRecipeDraftStep(currentIndex, currentIndex - 1);
+                        stepDragStateRef.current = {
+                          currentIndex: currentIndex - 1,
+                          lastSwapTs: now,
+                        };
+                        return;
+                      }
+
+                      if (
+                        gestureState.dy >= 26 &&
+                        currentIndex < recipeDetailDraft.steps.length - 1
+                      ) {
+                        moveRecipeDraftStep(currentIndex, currentIndex + 1);
+                        stepDragStateRef.current = {
+                          currentIndex: currentIndex + 1,
+                          lastSwapTs: now,
+                        };
+                      }
+                    },
+                    onPanResponderRelease: () => {
+                      setDraggingRecipeStepIndex(null);
+                      stepDragStateRef.current = { currentIndex: -1, lastSwapTs: 0 };
+                    },
+                    onPanResponderTerminate: () => {
+                      setDraggingRecipeStepIndex(null);
+                      stepDragStateRef.current = { currentIndex: -1, lastSwapTs: 0 };
+                    },
+                  })
+                : null;
+            return (
+              <View key={`detail-step-${index}`} style={styles.recipeDetailStepCard}>
+                <TouchableOpacity
+                  style={[styles.recipeDetailStepPhotoTile, isSavingRecipeDetail && styles.buttonDisabled]}
+                  onPress={() => {
+                    if (!isEditingRecipeDetail) {
+                      return;
+                    }
+                    void handlePickRecipeDetailStepPhoto(index);
+                  }}
+                  disabled={!isEditingRecipeDetail || isSavingRecipeDetail}
+                  activeOpacity={0.85}
+                >
+                  {stepPhotoUrl ? (
+                    <Image
+                      source={{ uri: stepPhotoUrl }}
+                      style={styles.recipeDetailStepPhotoTileImage}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <Ionicons name="camera-outline" size={18} color={palette.accent} />
+                  )}
+                </TouchableOpacity>
+
+                <View style={styles.recipeDetailStepCardContent}>
+                  <View style={styles.recipeDetailStepTextRow}>
+                    <Text style={styles.recipeDetailStepIndexText}>{index + 1}.</Text>
+                    {isEditingRecipeDetail ? (
+                      <TextInput
+                        style={styles.recipeDetailStepCardInput}
+                        value={item}
+                        onChangeText={(value) => updateRecipeDraftStep(index, value)}
+                        placeholder="Agregar preparación..."
+                        placeholderTextColor="#9EA5B8"
+                        editable={!isSavingRecipeDetail}
+                        multiline
+                      />
+                    ) : (
+                      <Text style={styles.recipeDetailStepCardText}>{item || '-'}</Text>
+                    )}
+                  </View>
+
+                  {isEditingRecipeDetail ? (
+                    <View style={styles.recipeDetailStepCardFooter}>
+                      {isRecipeStepReorderMode ? (
+                        <View style={styles.recipeDetailStepDragArea}>
+                          <View
+                            style={[
+                              styles.recipeDetailStepDragHandle,
+                              draggingRecipeStepIndex === index && styles.recipeDetailStepDragHandleActive,
+                              isSavingRecipeDetail && styles.buttonDisabled,
+                            ]}
+                            {...(stepDragResponder ? stepDragResponder.panHandlers : {})}
+                          >
+                            <Ionicons name="reorder-three-outline" size={18} color={palette.accent} />
+                          </View>
+                        </View>
+                      ) : null}
+
+                      <TouchableOpacity
+                        style={[
+                          styles.recipeDetailStepRemoveButton,
+                          (recipeDetailDraft.steps.length <= 1 || isSavingRecipeDetail) && styles.buttonDisabled,
+                        ]}
+                        onPress={() => removeRecipeDraftStep(index)}
+                        disabled={recipeDetailDraft.steps.length <= 1 || isSavingRecipeDetail}
+                      >
+                        <Ionicons name="trash-outline" size={15} color="#8B9AAA" />
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+            );
+          })}
+
           {isEditingRecipeDetail ? (
             <TouchableOpacity
-              style={[styles.manualAddMiniButton, isSavingRecipeDetail && styles.buttonDisabled]}
+              style={[styles.recipeDetailAddStepButton, isSavingRecipeDetail && styles.buttonDisabled]}
               onPress={addRecipeDraftStep}
               disabled={isSavingRecipeDetail}
             >
-              <Ionicons name="add" size={18} color={palette.card} />
+              <Ionicons name="add" size={16} color={palette.accent} />
+              <Text style={styles.recipeDetailAddStepButtonText}>Agregar paso</Text>
             </TouchableOpacity>
           ) : null}
 
@@ -2862,6 +3251,8 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     }
 
     setRecipeDetailDraft(buildRecipeDetailDraft(selectedRecipeForView));
+    setIsRecipeStepReorderMode(false);
+    setDraggingRecipeStepIndex(null);
     setRecipeDetailMode('edit');
     setRecipeDetailFeedback('');
   };
@@ -2872,6 +3263,8 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     }
 
     setRecipeDetailDraft(buildRecipeDetailDraft(selectedRecipeForView));
+    setIsRecipeStepReorderMode(false);
+    setDraggingRecipeStepIndex(null);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
     setIsSavingRecipeDetail(false);
@@ -2900,6 +3293,8 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     closePlanAssignModal();
     setSelectedCookbookForView(null);
     setSelectedRecipeForView(null);
+    setIsRecipeStepReorderMode(false);
+    setDraggingRecipeStepIndex(null);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
     setIsSavingRecipeDetail(false);
@@ -2947,6 +3342,8 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     recipeDetailRequestIdRef.current += 1;
     setSelectedCookbookForView(cookbook);
     setSelectedRecipeForView(null);
+    setIsRecipeStepReorderMode(false);
+    setDraggingRecipeStepIndex(null);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
     setSelectedCookbookRecipeIds([]);
@@ -2962,9 +3359,15 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     recipeDetailRequestIdRef.current += 1;
     closePlanAssignModal();
     setSelectedRecipeForView(null);
+    setIsRecipeStepReorderMode(false);
+    setDraggingRecipeStepIndex(null);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
     setIsSavingRecipeDetail(false);
+    setIsRecipeMoreDropdownOpen(false);
+    setIsDeletingRecipe(false);
+    setIsRecipeMoreMenuOpen(false);
+    setIsRecipeDeleteConfirmOpen(false);
     setIsRecipeCookbookPickerOpen(false);
     setRecipeCookbookSelectionIds([]);
     setIsSavingRecipeCookbookSelection(false);
@@ -2982,6 +3385,8 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     recipeDetailRequestIdRef.current += 1;
     const requestId = recipeDetailRequestIdRef.current;
     setSelectedRecipeForView(recipe);
+    setIsRecipeStepReorderMode(false);
+    setDraggingRecipeStepIndex(null);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
     setRecipeDetailDraft(buildRecipeDetailDraft(recipe));
@@ -3030,21 +3435,109 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     }));
   };
 
+  const updateRecipeDraftStepPhoto = (targetIndex, value) => {
+    setRecipeDetailDraft((prevDraft) => {
+      const currentStepPhotos = Array.isArray(prevDraft.stepPhotos)
+        ? [...prevDraft.stepPhotos]
+        : Array.from({ length: prevDraft.steps.length }, () => '');
+      while (currentStepPhotos.length < prevDraft.steps.length) {
+        currentStepPhotos.push('');
+      }
+      currentStepPhotos[targetIndex] = String(value || '');
+      return {
+        ...prevDraft,
+        stepPhotos: currentStepPhotos,
+      };
+    });
+  };
+
   const addRecipeDraftStep = () => {
     setRecipeDetailDraft((prevDraft) => ({
       ...prevDraft,
       steps: [...prevDraft.steps, ''],
+      stepPhotos: [...(Array.isArray(prevDraft.stepPhotos) ? prevDraft.stepPhotos : []), ''],
     }));
   };
 
   const removeRecipeDraftStep = (targetIndex) => {
     setRecipeDetailDraft((prevDraft) => {
       const nextSteps = prevDraft.steps.filter((_, index) => index !== targetIndex);
+      const nextStepPhotos = (Array.isArray(prevDraft.stepPhotos) ? prevDraft.stepPhotos : []).filter(
+        (_, index) => index !== targetIndex
+      );
       return {
         ...prevDraft,
         steps: nextSteps.length > 0 ? nextSteps : [''],
+        stepPhotos: nextStepPhotos.length > 0 ? nextStepPhotos : [''],
       };
     });
+  };
+
+  const moveRecipeDraftStep = (fromIndex, toIndex) => {
+    setRecipeDetailDraft((prevDraft) => {
+      if (
+        fromIndex === toIndex ||
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= prevDraft.steps.length ||
+        toIndex >= prevDraft.steps.length
+      ) {
+        return prevDraft;
+      }
+
+      const nextSteps = [...prevDraft.steps];
+      const [movedStep] = nextSteps.splice(fromIndex, 1);
+      nextSteps.splice(toIndex, 0, movedStep);
+
+      const baseStepPhotos = Array.isArray(prevDraft.stepPhotos)
+        ? [...prevDraft.stepPhotos]
+        : Array.from({ length: prevDraft.steps.length }, () => '');
+      while (baseStepPhotos.length < prevDraft.steps.length) {
+        baseStepPhotos.push('');
+      }
+      const [movedPhoto] = baseStepPhotos.splice(fromIndex, 1);
+      baseStepPhotos.splice(toIndex, 0, movedPhoto);
+
+      return {
+        ...prevDraft,
+        steps: nextSteps,
+        stepPhotos: baseStepPhotos,
+      };
+    });
+  };
+
+  const handlePickRecipeDetailStepPhoto = async (targetIndex) => {
+    if (!canEditSelectedRecipe || recipeDetailMode !== 'edit') {
+      return;
+    }
+
+    if (Platform.OS !== 'web') {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permission.status !== 'granted') {
+        setRecipeDetailFeedback('Debes permitir acceso a tus fotos para agregar imagen.');
+        return;
+      }
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.65,
+      base64: true,
+    });
+
+    if (result.canceled || !result.assets?.length) {
+      return;
+    }
+
+    const selectedAsset = result.assets[0];
+    const mimeType = selectedAsset.mimeType || 'image/jpeg';
+    const photoUrl = selectedAsset.base64
+      ? `data:${mimeType};base64,${selectedAsset.base64}`
+      : selectedAsset.uri;
+
+    updateRecipeDraftStepPhoto(targetIndex, photoUrl);
+    setRecipeDetailFeedback('');
   };
 
   const composeRecipeDescription = (description, ingredients) => {
@@ -3079,9 +3572,14 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
       return;
     }
 
-    const cleanSteps = recipeDetailDraft.steps
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0);
+    const cleanStepRows = recipeDetailDraft.steps
+      .map((item, index) => ({
+        step: item.trim(),
+        photo: String(recipeDetailDraft.stepPhotos?.[index] || '').trim(),
+      }))
+      .filter((row) => row.step.length > 0);
+    const cleanSteps = cleanStepRows.map((row) => row.step);
+    const cleanStepPhotos = cleanStepRows.map((row) => row.photo);
     const descriptionToSave = composeRecipeDescription(
       recipeDetailDraft.description,
       recipeDetailDraft.ingredients
@@ -3095,6 +3593,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
         name,
         description: descriptionToSave,
         main_photo_url: recipeDetailDraft.mainPhotoUrl || null,
+        additional_photos: cleanStepPhotos,
         steps: cleanSteps,
         instructions: cleanSteps.join('\n'),
         is_public: recipeDetailDraft.isPublic,
@@ -3113,6 +3612,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
       name,
       description: descriptionToSave,
       main_photo_url: recipeDetailDraft.mainPhotoUrl || null,
+      additional_photos: cleanStepPhotos,
       steps: cleanSteps,
       instructions: cleanSteps.join('\n'),
       is_public: recipeDetailDraft.isPublic,
@@ -3140,6 +3640,8 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     }
 
     setRecipeDetailMode('view');
+    setIsRecipeStepReorderMode(false);
+    setDraggingRecipeStepIndex(null);
     setRecipeDetailFeedback('Receta actualizada correctamente.');
   };
 
@@ -3343,12 +3845,25 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     setManualRecipeFeedback('');
   };
 
-  const handlePickRecipeDetailPhoto = async () => {
+  const handlePickRecipeDetailPhotoFromSource = async (sourceType = 'gallery') => {
     if (!canEditSelectedRecipe || recipeDetailMode !== 'edit') {
       return;
     }
 
-    if (Platform.OS !== 'web') {
+    if (sourceType === 'camera' && Platform.OS === 'web') {
+      setRecipeDetailFeedback('La cámara no está disponible en web.');
+      return;
+    }
+
+    if (sourceType === 'camera' && Platform.OS !== 'web') {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (permission.status !== 'granted') {
+        setRecipeDetailFeedback('Debes permitir acceso a la cámara para tomar foto.');
+        return;
+      }
+    }
+
+    if (sourceType !== 'camera' && Platform.OS !== 'web') {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (permission.status !== 'granted') {
         setRecipeDetailFeedback('Debes permitir acceso a tus fotos para agregar imagen.');
@@ -3356,12 +3871,19 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
       }
     }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 0.65,
-      base64: true,
-    });
+    const result =
+      sourceType === 'camera'
+        ? await ImagePicker.launchCameraAsync({
+            allowsEditing: true,
+            quality: 0.65,
+            base64: true,
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            quality: 0.65,
+            base64: true,
+          });
 
     if (result.canceled || !result.assets?.length) {
       return;
@@ -3378,6 +3900,10 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
       mainPhotoUrl: photoUrl,
     }));
     setRecipeDetailFeedback('');
+  };
+
+  const handlePickRecipeDetailPhoto = async () => {
+    await handlePickRecipeDetailPhotoFromSource('gallery');
   };
 
   const getTodayDateString = () => toIsoDate(new Date());
@@ -3481,7 +4007,9 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     setPlanFeedback('');
     const { data, error } = await supabase
       .from('recipes')
-      .select('id, owner_user_id, name, description, main_photo_url, steps, instructions, is_public, source_url')
+      .select(
+        'id, owner_user_id, name, description, main_photo_url, additional_photos, steps, instructions, is_public, source_url'
+      )
       .eq('id', recipeId)
       .single();
 
@@ -4020,7 +4548,9 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
 
     const { data: fetchedRecipe, error: recipeError } = await supabase
       .from('recipes')
-      .select('id, owner_user_id, name, description, main_photo_url, steps, instructions, is_public, source_url')
+      .select(
+        'id, owner_user_id, name, description, main_photo_url, additional_photos, steps, instructions, is_public, source_url'
+      )
       .eq('id', recipeId)
       .eq('owner_user_id', userId)
       .single();
@@ -4033,6 +4563,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
         name: importedRecipeFallback.name || '',
         description: importedRecipeFallback.description || '',
         main_photo_url: importedRecipeFallback.main_photo_url || '',
+        additional_photos: importedRecipeFallback.additional_photos || [],
         steps: importedRecipeFallback.steps || [],
         instructions: importedRecipeFallback.instructions || '',
         source_url: importedRecipeFallback.source_url || '',
@@ -4489,6 +5020,93 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
           <View style={styles.imageImportLoadingCard}>
             <ActivityIndicator size="small" color={palette.accent} />
             <Text style={styles.imageImportLoadingText}>{imageImportProgressText}</Text>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={isRecipeMoreMenuOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setIsRecipeMoreMenuOpen(false)}
+      >
+        <View style={styles.cameraImportOverlay}>
+          <Pressable
+            style={styles.cameraImportBackdrop}
+            onPress={() => setIsRecipeMoreMenuOpen(false)}
+          />
+          <View style={styles.recipeMoreMenuPopup}>
+            <TouchableOpacity
+              style={styles.recipeMoreMenuItem}
+              onPress={() => {
+                setIsRecipeMoreMenuOpen(false);
+                void handleExportRecipePdf();
+              }}
+              disabled={isDeletingRecipe}
+            >
+              <Ionicons name="document-outline" size={20} color={palette.accent} />
+              <Text style={styles.recipeMoreMenuItemText}>Exportar PDF</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.recipeMoreMenuItem}
+              onPress={() => {
+                setIsRecipeMoreMenuOpen(false);
+                setIsRecipeDeleteConfirmOpen(true);
+              }}
+              disabled={isDeletingRecipe}
+            >
+              <Ionicons name="trash-outline" size={20} color="#DC2626" />
+              <Text style={styles.recipeMoreMenuItemTextDanger}>Borrar</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.recipeMoreMenuCancel}
+              onPress={() => setIsRecipeMoreMenuOpen(false)}
+            >
+              <Text style={styles.recipeMoreMenuCancelText}>Cancelar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={isRecipeDeleteConfirmOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setIsRecipeDeleteConfirmOpen(false)}
+      >
+        <View style={styles.cameraImportOverlay}>
+          <Pressable
+            style={styles.cameraImportBackdrop}
+            onPress={() => setIsRecipeDeleteConfirmOpen(false)}
+          />
+          <View style={styles.recipeMoreMenuPopup}>
+            <Text style={styles.recipeDeleteConfirmTitle}>Borrar receta</Text>
+            <Text style={styles.recipeDeleteConfirmText}>
+              ¿Deseas borrar esta receta? Esta acción no se puede deshacer.
+            </Text>
+            <View style={styles.recipeDeleteConfirmActions}>
+              <TouchableOpacity
+                style={styles.importButtonSecondary}
+                onPress={() => setIsRecipeDeleteConfirmOpen(false)}
+                disabled={isDeletingRecipe}
+              >
+                <Text style={styles.importButtonSecondaryText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.importButtonPrimary, styles.recipeDeleteConfirmButton, isDeletingRecipe && styles.buttonDisabled]}
+                onPress={() => {
+                  setIsRecipeDeleteConfirmOpen(false);
+                  void handleDeleteSelectedRecipe();
+                }}
+                disabled={isDeletingRecipe}
+              >
+                <Text style={styles.importButtonPrimaryText}>
+                  {isDeletingRecipe ? 'Borrando...' : 'Borrar'}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -5772,11 +6390,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: spacing.sm,
+    zIndex: 25,
   },
   recipeDetailEditActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  recipeDetailEditMenuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    zIndex: 20,
   },
   recipeDetailEditButton: {
     paddingHorizontal: 10,
@@ -5798,6 +6423,47 @@ const styles = StyleSheet.create({
   recipeDetailEditButtonTextPrimary: {
     color: palette.card,
   },
+  recipeDetailMoreButton: {
+    width: 34,
+    height: 30,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#C6D4E8',
+    backgroundColor: '#FAFCFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeDetailMoreMenuWrap: {
+    position: 'relative',
+  },
+  recipeDetailMoreMenuDropdown: {
+    position: 'absolute',
+    top: 36,
+    right: 0,
+    minWidth: 128,
+    borderWidth: 1,
+    borderColor: '#DCE6EC',
+    borderRadius: 12,
+    backgroundColor: '#FAFCFF',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  recipeDetailMoreMenuItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  recipeDetailMoreMenuItemText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 12,
+  },
+  recipeDetailMoreMenuItemTextDanger: {
+    color: '#DC2626',
+  },
   recipeDetailHero: {
     height: 260,
     backgroundColor: '#8FA4C6',
@@ -5807,6 +6473,30 @@ const styles = StyleSheet.create({
   },
   recipeDetailHeroTouchable: {
     flex: 1,
+    position: 'relative',
+  },
+  recipeDetailPhotoQuickActions: {
+    position: 'absolute',
+    right: 10,
+    bottom: 10,
+    gap: 8,
+    alignItems: 'flex-end',
+  },
+  recipeDetailPhotoQuickAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#DCE6EC',
+    borderRadius: 999,
+    backgroundColor: 'rgba(250, 252, 255, 0.95)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  recipeDetailPhotoQuickActionText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 12,
   },
   recipeDetailHeroImage: {
     width: '100%',
@@ -5870,25 +6560,28 @@ const styles = StyleSheet.create({
   recipeViewActionsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
+    flexWrap: 'nowrap',
     gap: spacing.md,
     marginBottom: spacing.md,
   },
   recipeCookedToggleButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
     flexShrink: 1,
+    minWidth: 0,
   },
   recipeCookedToggleText: {
     color: palette.accent,
     fontFamily: fonts.regular,
-    fontSize: 16,
+    fontSize: 13,
+    lineHeight: 16,
   },
   recipeCookedToggleIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: '#D8D3CB',
     alignItems: 'center',
     justifyContent: 'center',
@@ -5899,7 +6592,9 @@ const styles = StyleSheet.create({
   recipeRatingStarsWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 2,
+    marginLeft: 'auto',
+    flexShrink: 0,
   },
   recipeCookedNoteInput: {
     borderRadius: 18,
@@ -5976,6 +6671,132 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     fontSize: 14,
     lineHeight: 20,
+  },
+  recipeDetailStepsHeaderRow: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  recipeDetailReorderButton: {
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  recipeDetailReorderText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 14,
+  },
+  recipeDetailStepCard: {
+    backgroundColor: '#FAFCFF',
+    borderRadius: 10,
+    padding: 6,
+    borderWidth: 1,
+    borderColor: '#DCE6EC',
+    marginBottom: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+  },
+  recipeDetailStepPhotoTile: {
+    width: 42,
+    height: 42,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#C6D4E8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+  },
+  recipeDetailStepPhotoTileImage: {
+    width: '100%',
+    height: '100%',
+  },
+  recipeDetailStepCardContent: {
+    flex: 1,
+  },
+  recipeDetailStepTextRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+  },
+  recipeDetailStepIndexText: {
+    color: '#8B9AAA',
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 1,
+  },
+  recipeDetailStepCardInput: {
+    flex: 1,
+    color: palette.accent,
+    fontFamily: fonts.regular,
+    fontSize: 14,
+    lineHeight: 20,
+    minHeight: 44,
+    paddingTop: 0,
+    paddingBottom: 0,
+  },
+  recipeDetailStepCardText: {
+    flex: 1,
+    color: palette.accent,
+    fontFamily: fonts.regular,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  recipeDetailStepCardFooter: {
+    marginTop: 6,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 8,
+  },
+  recipeDetailStepDragArea: {
+    marginRight: 'auto',
+  },
+  recipeDetailStepDragHandle: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: '#D6DBE6',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeDetailStepDragHandleActive: {
+    borderColor: '#9FB4D6',
+    backgroundColor: '#F0F6FF',
+  },
+  recipeDetailStepRemoveButton: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#D6DBE6',
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+  },
+  recipeDetailAddStepButton: {
+    marginTop: 4,
+    marginBottom: spacing.sm,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.accent,
+    backgroundColor: palette.card,
+    minHeight: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  recipeDetailAddStepButtonText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 14,
   },
   cookbookRenameRow: {
     gap: spacing.sm,
@@ -6213,6 +7034,65 @@ const styles = StyleSheet.create({
     color: palette.accent,
     fontFamily: fonts.medium,
     fontSize: 14,
+  },
+  recipeMoreMenuPopup: {
+    backgroundColor: palette.card,
+    borderRadius: 18,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: '#DCE6EC',
+    gap: spacing.sm,
+  },
+  recipeMoreMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#DCE6EC',
+    borderRadius: 12,
+    backgroundColor: '#FAFCFF',
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  recipeMoreMenuItemText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 15,
+  },
+  recipeMoreMenuItemTextDanger: {
+    color: '#DC2626',
+    fontFamily: fonts.medium,
+    fontSize: 15,
+  },
+  recipeMoreMenuCancel: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  recipeMoreMenuCancelText: {
+    color: palette.mutedText,
+    fontFamily: fonts.medium,
+    fontSize: 13,
+  },
+  recipeDeleteConfirmTitle: {
+    color: palette.accent,
+    fontFamily: fonts.semiBold,
+    fontSize: 20,
+  },
+  recipeDeleteConfirmText: {
+    color: palette.text,
+    fontFamily: fonts.regular,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  recipeDeleteConfirmActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: spacing.sm,
+    marginTop: 6,
+  },
+  recipeDeleteConfirmButton: {
+    backgroundColor: '#DC2626',
   },
   cookbookRecipeSelectIcon: {
     marginRight: 10,
