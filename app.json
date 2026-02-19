@@ -12,8 +12,18 @@
       "backgroundColor": "#FFF5E6"
     },
     "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "icon": "./public/logo.png"
+    },
     "android": {
-      "package": "com.savemydish.app"
+      "package": "com.savemydish.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./public/logo.png",
+        "backgroundColor": "#FFF5E6"
+      }
+    },
+    "web": {
+      "favicon": "./public/logo.png"
     }
   }
 }
