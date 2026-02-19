@@ -1480,7 +1480,6 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     }
   };
 
-  const handleDeleteSelectedRecipe = async () => {
   const handleShareRecipeLink = async (recipeNameValue, onErrorMessage) => {
     const recipeName = String(recipeNameValue || '').trim() || 'Receta';
     const appUrl = 'https://www.savemydish.com';
