@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Image, StyleSheet } from 'react-native';
 import ScreenContainer from '../components/ScreenContainer';
 import { palette } from '../theme';
 
@@ -16,9 +16,11 @@ export default function SplashScreen({ onFinish }) {
       statusBarStyle="light-content"
       contentStyle={styles.content}
     >
-      <View style={styles.ringOuter} />
-      <View style={styles.ringInner} />
-      <View style={styles.centerMark} />
+      <Image
+        source={require('../public/logo.png')}
+        style={styles.logo}
+        resizeMode="contain"
+      />
     </ScreenContainer>
   );
 }
@@ -28,30 +30,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  ringOuter: {
-    position: 'absolute',
-    width: 280,
-    height: 280,
-    borderRadius: 140,
-    borderWidth: 1,
-    borderColor: '#6EA69D',
-    opacity: 0.35,
-  },
-  ringInner: {
-    position: 'absolute',
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    borderWidth: 1,
-    borderColor: '#9CC9C2',
-    opacity: 0.45,
-  },
-  centerMark: {
-    width: 74,
-    height: 74,
-    borderRadius: 37,
-    borderWidth: 2,
-    borderColor: '#D9F4EE',
-    backgroundColor: 'rgba(217, 244, 238, 0.12)',
+  logo: {
+    width: 240,
+    height: 240,
   },
 });

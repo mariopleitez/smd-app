@@ -4,7 +4,13 @@
     "slug": "savemydish",
     "version": "1.0.0",
     "orientation": "portrait",
+    "icon": "./public/logo.png",
     "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./public/logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFF5E6"
+    },
     "assetBundlePatterns": ["**/*"],
     "android": {
       "package": "com.savemydish.app"

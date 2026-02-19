@@ -2,3 +2,9 @@ project_id = "pqocmeiqewnxpklfcwwd"
 
 [functions.import-recipe-from-url]
 verify_jwt = false
+
+[functions.import-recipe-from-text]
+verify_jwt = false
+
+[functions.import-recipe-from-image]
+verify_jwt = false

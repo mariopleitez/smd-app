@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   ActivityIndicator,
   Animated,
   Easing,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -15,16 +17,18 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import * as ExpoClipboard from 'expo-clipboard';
 import { fonts, palette, spacing } from '../theme';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
-export default function PrincipalScreen({ onLogout, userEmail, userId }) {
+export default function PrincipalScreen({ onLogout, userEmail, userId, userName }) {
   const tabs = useMemo(
     () => [
-      { key: 'recetas', label: 'Recetas', icon: 'book-outline' },
-      { key: 'lista', label: 'Lista', icon: 'checkbox-outline' },
+      { key: 'recetas', label: 'Recetas', icon: 'restaurant-outline' },
+      { key: 'lista', label: 'Lista', icon: 'basket-outline' },
       { key: 'plan', label: 'Plan', icon: 'calendar-outline' },
       { key: 'perfil', label: 'Perfil', icon: 'person-outline' },
     ],
@@ -38,21 +42,29 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
   const [isMutatingList, setIsMutatingList] = useState(false);
   const [listFeedback, setListFeedback] = useState('');
   const [cookbooks, setCookbooks] = useState([]);
-  const [cookbookInput, setCookbookInput] = useState('');
+  const [cookbookSearchQuery, setCookbookSearchQuery] = useState('');
   const [isCookbooksLoading, setIsCookbooksLoading] = useState(false);
   const [isMutatingCookbooks, setIsMutatingCookbooks] = useState(false);
   const [cookbookFeedback, setCookbookFeedback] = useState('');
+  const [isCreateCookbookSheetOpen, setIsCreateCookbookSheetOpen] = useState(false);
+  const [newCookbookName, setNewCookbookName] = useState('');
   const [isCreateRecipeSheetOpen, setIsCreateRecipeSheetOpen] = useState(false);
+  const [isCameraImportPickerOpen, setIsCameraImportPickerOpen] = useState(false);
   const [isImportUrlModalOpen, setIsImportUrlModalOpen] = useState(false);
+  const [isPasteTextModalOpen, setIsPasteTextModalOpen] = useState(false);
   const [importUrl, setImportUrl] = useState('');
+  const [pasteRecipeText, setPasteRecipeText] = useState('');
   const [isImportingRecipe, setIsImportingRecipe] = useState(false);
+  const [imageImportProgressText, setImageImportProgressText] = useState('');
   const [importFeedback, setImportFeedback] = useState('');
+  const [pasteRecipeFeedback, setPasteRecipeFeedback] = useState('');
   const [isManualRecipeModalOpen, setIsManualRecipeModalOpen] = useState(false);
   const [manualRecipeTitle, setManualRecipeTitle] = useState('');
   const [manualMainPhotoUrl, setManualMainPhotoUrl] = useState('');
   const [manualRecipeDescription, setManualRecipeDescription] = useState('');
   const [manualIngredients, setManualIngredients] = useState(['']);
   const [manualSteps, setManualSteps] = useState(['']);
+  const [manualIsPublic, setManualIsPublic] = useState(false);
   const [manualRecipeFeedback, setManualRecipeFeedback] = useState('');
   const [isSavingManualRecipe, setIsSavingManualRecipe] = useState(false);
   const [manualRecipeEditingId, setManualRecipeEditingId] = useState(null);
@@ -100,6 +112,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
     ingredients: [''],
     steps: [''],
     mainPhotoUrl: '',
+    isPublic: false,
   });
   const [selectedCookbookRecipeIds, setSelectedCookbookRecipeIds] = useState([]);
   const [cookbookRecipeAction, setCookbookRecipeAction] = useState(null);
@@ -109,13 +122,26 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
   const [cookbookRenameInput, setCookbookRenameInput] = useState('');
   const [isCookbookToolsOpen, setIsCookbookToolsOpen] = useState(false);
   const [isMoveRecipesPickerOpen, setIsMoveRecipesPickerOpen] = useState(false);
+  const [recipeSearchScope, setRecipeSearchScope] = useState('mine');
+  const [isRecipeSearchScopeMenuOpen, setIsRecipeSearchScopeMenuOpen] = useState(false);
+  const [recipeSearchResults, setRecipeSearchResults] = useState([]);
+  const [isSearchingRecipes, setIsSearchingRecipes] = useState(false);
+  const [recipeSearchFeedback, setRecipeSearchFeedback] = useState('');
+  const [recipeCookedById, setRecipeCookedById] = useState({});
+  const [recipeRatingById, setRecipeRatingById] = useState({});
+  const [recipeNoteById, setRecipeNoteById] = useState({});
   const ingredientInputRefs = useRef([]);
   const stepInputRefs = useRef([]);
   const tabContentOpacity = useRef(new Animated.Value(1)).current;
   const tabContentTranslateY = useRef(new Animated.Value(0)).current;
   const sheetBackdropOpacity = useRef(new Animated.Value(0)).current;
   const sheetTranslateY = useRef(new Animated.Value(320)).current;
-
+  const COOKBOOKS_CACHE_TTL_MS = 5 * 60 * 1000;
+  const lastCookbooksLoadAtRef = useRef(0);
+  const lastCookbooksUserRef = useRef('');
+  const cookbooksRef = useRef([]);
+  const recipeDetailsCacheRef = useRef({});
+  const recipeDetailRequestIdRef = useRef(0);
   useEffect(() => {
     if (activeTab === displayedTab) {
       return;
@@ -156,14 +182,58 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
     });
   }, [activeTab, displayedTab, tabContentOpacity, tabContentTranslateY]);
 
-  const loadCookbooks = useCallback(async () => {
+  useEffect(() => {
+    cookbooksRef.current = cookbooks;
+  }, [cookbooks]);
+
+  const loadCookbooks = useCallback(async ({ force = false } = {}) => {
     if (!isSupabaseConfigured || !supabase) {
       return [];
     }
 
-    setIsCookbooksLoading(true);
+    const currentUserKey = `user:${userId || 'anon'}`;
+    const storageKey = `smd:cookbooks:${userId || 'anon'}`;
+    if (lastCookbooksUserRef.current !== currentUserKey) {
+      lastCookbooksUserRef.current = currentUserKey;
+      lastCookbooksLoadAtRef.current = 0;
+      recipeDetailsCacheRef.current = {};
+      setCookbooks([]);
+    }
+
+    const now = Date.now();
+    const cachedCookbooksInMemory = cookbooksRef.current;
+    if (!force && lastCookbooksLoadAtRef.current && now - lastCookbooksLoadAtRef.current < COOKBOOKS_CACHE_TTL_MS) {
+      return cachedCookbooksInMemory;
+    }
+
+    if (!force && userId) {
+      try {
+        const cachedRaw = await AsyncStorage.getItem(storageKey);
+        if (cachedRaw) {
+          const parsed = JSON.parse(cachedRaw);
+          if (
+            parsed &&
+            Array.isArray(parsed.cookbooks) &&
+            Number.isFinite(parsed.timestamp) &&
+            parsed.cookbooks.length > 0
+          ) {
+            setCookbooks(parsed.cookbooks);
+            lastCookbooksLoadAtRef.current = parsed.timestamp;
+
+            if (now - parsed.timestamp < COOKBOOKS_CACHE_TTL_MS) {
+              return parsed.cookbooks;
+            }
+          }
+        }
+      } catch (_cacheReadError) {
+        // Si no se puede leer caché local, se continúa con la carga remota.
+      }
+    }
+
+    setIsCookbooksLoading(!force && cachedCookbooksInMemory.length > 0 ? false : true);
     setCookbookFeedback('');
-    const { data, error } = await supabase
+
+    let cookbooksRequest = supabase
       .from('cookbooks')
       .select(`
         id,
@@ -178,12 +248,31 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
             name,
             description,
             main_photo_url,
-            steps,
-            instructions
+            is_public
           )
         )
       `)
       .order('created_at', { ascending: false });
+
+    if (userId) {
+      cookbooksRequest = cookbooksRequest.eq('owner_user_id', userId);
+    }
+
+    const userRecipesRequest = userId
+      ? supabase
+          .from('recipes')
+          .select('id, owner_user_id, name, description, main_photo_url, is_public, created_at')
+          .eq('owner_user_id', userId)
+          .order('created_at', { ascending: false })
+      : Promise.resolve({ data: [], error: null });
+
+    const [cookbooksResponse, userRecipesResponse] = await Promise.all([
+      cookbooksRequest,
+      userRecipesRequest,
+    ]);
+    const { data, error } = cookbooksResponse;
+    const { data: userRecipes, error: userRecipesError } = userRecipesResponse;
+
     if (error) {
       setIsCookbooksLoading(false);
       setCookbookFeedback('No fue posible cargar los recetarios.');
@@ -215,14 +304,9 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
     if (!userId) {
       setCookbooks(normalizedCookbooks);
       setIsCookbooksLoading(false);
+      lastCookbooksLoadAtRef.current = Date.now();
       return normalizedCookbooks;
     }
-
-    const { data: userRecipes, error: userRecipesError } = await supabase
-      .from('recipes')
-      .select('id, owner_user_id, name, description, main_photo_url, steps, instructions, created_at')
-      .eq('owner_user_id', userId)
-      .order('created_at', { ascending: false });
 
     if (userRecipesError) {
       setCookbooks(normalizedCookbooks);
@@ -258,11 +342,23 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
               recipes: recipesWithoutCookbook,
               previewRecipes: recipesWithoutCookbook.slice(0, 3),
             },
-          ]
+            ]
         : normalizedCookbooks;
 
     setCookbooks(listWithUnassigned);
     setIsCookbooksLoading(false);
+    lastCookbooksLoadAtRef.current = Date.now();
+    try {
+      await AsyncStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          timestamp: Date.now(),
+          cookbooks: listWithUnassigned,
+        })
+      );
+    } catch (_cacheWriteError) {
+      // Si la caché local no está disponible, no bloqueamos el flujo.
+    }
     return listWithUnassigned;
   }, [userId]);
 
@@ -304,6 +400,125 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
     () => cookbooks.filter((cookbook) => cookbook.owner_user_id === userId),
     [cookbooks, userId]
   );
+  const profileDisplayName = useMemo(() => {
+    const explicitName = String(userName || '').trim();
+    if (explicitName) {
+      return explicitName;
+    }
+
+    const emailValue = String(userEmail || '').trim();
+    if (emailValue.includes('@')) {
+      return emailValue.split('@')[0];
+    }
+
+    return '';
+  }, [userEmail, userName]);
+
+  const isAuthorRecipe = useCallback(() => false, []);
+
+  const getRecipeOwnerLabel = useCallback(
+    (recipe) => {
+      const fallbackPublicOwnerName =
+        String(process.env.EXPO_PUBLIC_PUBLIC_OWNER_DISPLAY_NAME || 'Usuario').trim() ||
+        'Usuario';
+
+      if (!recipe) {
+        return fallbackPublicOwnerName;
+      }
+
+      const ownerName = String(
+        recipe.owner_name || recipe.owner_full_name || recipe.owner_username || ''
+      ).trim();
+      if (ownerName) {
+        return ownerName;
+      }
+
+      const ownerId = String(recipe.owner_user_id || '');
+      if (!ownerId) {
+        return fallbackPublicOwnerName;
+      }
+
+      if (String(userId || '') === ownerId) {
+        return 'Tú';
+      }
+
+      if (isAuthorRecipe(recipe)) {
+        return String(process.env.EXPO_PUBLIC_AUTHOR_DISPLAY_NAME || 'Mario Chef').trim();
+      }
+
+      return fallbackPublicOwnerName;
+    },
+    [isAuthorRecipe, userId]
+  );
+
+  useEffect(() => {
+    const query = cookbookSearchQuery.trim();
+    if (activeTab !== 'recetas' || selectedCookbookForView) {
+      return;
+    }
+
+    if (!query) {
+      setRecipeSearchResults([]);
+      setRecipeSearchFeedback('');
+      setIsSearchingRecipes(false);
+      return;
+    }
+
+    if (!isSupabaseConfigured || !supabase || !userId) {
+      setRecipeSearchResults([]);
+      setRecipeSearchFeedback('Debes iniciar sesión para buscar recetas.');
+      setIsSearchingRecipes(false);
+      return;
+    }
+
+    let isCancelled = false;
+    const timer = setTimeout(async () => {
+      setIsSearchingRecipes(true);
+      setRecipeSearchFeedback('');
+
+      let request = supabase
+        .from('recipes')
+        .select('id, owner_user_id, name, description, main_photo_url, is_public, created_at')
+        .ilike('name', `%${query}%`)
+        .order('created_at', { ascending: false })
+        .limit(80);
+
+      if (recipeSearchScope === 'mine') {
+        request = request.eq('owner_user_id', userId);
+      } else if (recipeSearchScope === 'savemydish') {
+        request = request.eq('is_public', true);
+      }
+
+      const { data, error } = await request;
+      if (isCancelled) {
+        return;
+      }
+
+      setIsSearchingRecipes(false);
+
+      if (error) {
+        setRecipeSearchResults([]);
+        setRecipeSearchFeedback('No se pudo buscar recetas.');
+        return;
+      }
+
+      setRecipeSearchResults(data || []);
+      if ((data || []).length === 0) {
+        setRecipeSearchFeedback('No se encontraron recetas.');
+      }
+    }, 280);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    activeTab,
+    cookbookSearchQuery,
+    recipeSearchScope,
+    selectedCookbookForView,
+    userId,
+  ]);
 
   const splitRecipeDescription = (rawDescription) => {
     const description = (rawDescription || '').trim();
@@ -377,7 +592,80 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
       ingredients: ingredients.length > 0 ? ingredients : [''],
       steps: normalizedSteps.length > 0 ? normalizedSteps : [''],
       mainPhotoUrl: recipe?.main_photo_url || '',
+      isPublic: Boolean(recipe?.is_public),
     };
+  };
+
+  const hasRecipeDetailPayload = (recipe) => {
+    if (!recipe || typeof recipe !== 'object') {
+      return false;
+    }
+
+    const hasStepsField = Object.prototype.hasOwnProperty.call(recipe, 'steps');
+    const hasInstructionsField = Object.prototype.hasOwnProperty.call(recipe, 'instructions');
+    if (!hasStepsField && !hasInstructionsField) {
+      return false;
+    }
+
+    if (Array.isArray(recipe.steps) && recipe.steps.length > 0) {
+      return true;
+    }
+
+    if (typeof recipe.instructions === 'string' && recipe.instructions.trim().length > 0) {
+      return true;
+    }
+
+    return hasStepsField || hasInstructionsField;
+  };
+
+  const fetchRecipeDetailsById = async (recipeId) => {
+    if (!recipeId || !supabase || !isSupabaseConfigured) {
+      return null;
+    }
+
+    const { data, error } = await supabase
+      .from('recipes')
+      .select('id, owner_user_id, name, description, main_photo_url, steps, instructions, is_public, source_url')
+      .eq('id', recipeId)
+      .single();
+
+    if (error || !data) {
+      return null;
+    }
+
+    return data;
+  };
+
+  const ensureRecipeDetailsLoaded = async (recipe) => {
+    if (!recipe?.id) {
+      return recipe;
+    }
+
+    const recipeKey = String(recipe.id);
+    const cachedRecipe = recipeDetailsCacheRef.current[recipeKey];
+    if (cachedRecipe) {
+      return {
+        ...recipe,
+        ...cachedRecipe,
+      };
+    }
+
+    if (hasRecipeDetailPayload(recipe)) {
+      recipeDetailsCacheRef.current[recipeKey] = recipe;
+      return recipe;
+    }
+
+    const fetchedRecipe = await fetchRecipeDetailsById(recipe.id);
+    if (fetchedRecipe) {
+      const mergedRecipe = {
+        ...recipe,
+        ...fetchedRecipe,
+      };
+      recipeDetailsCacheRef.current[recipeKey] = mergedRecipe;
+      return mergedRecipe;
+    }
+
+    return recipe;
   };
 
   const findRecipeAcrossCookbooks = (cookbookList, recipeId) => {
@@ -439,6 +727,132 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
   );
   const canEditSelectedRecipe = Boolean(selectedRecipeForView?.owner_user_id === userId);
   const isEditingRecipeInManualForm = Boolean(manualRecipeEditingId);
+  const normalizeRecipeIngredientText = (value) =>
+    String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .replace(/^\s*[-•]\s*/, '');
+
+  const selectedRecipeCookbookNames = useMemo(() => {
+    if (!selectedRecipeForView?.id) {
+      return [];
+    }
+
+    return cookbooks
+      .filter((cookbook) =>
+        (cookbook.recipes || []).some((recipe) => String(recipe.id) === String(selectedRecipeForView.id))
+      )
+      .map((cookbook) => (cookbook.name || '').trim())
+      .filter((name) => Boolean(name));
+  }, [cookbooks, selectedRecipeForView]);
+
+  const selectedRecipeCookbookSummary = useMemo(() => {
+    if (!selectedRecipeForView?.id) {
+      return 'Sin receta seleccionada.';
+    }
+
+    return selectedRecipeCookbookNames.length > 0
+      ? selectedRecipeCookbookNames.join(', ')
+      : 'Sin recetario';
+  }, [selectedRecipeForView, selectedRecipeCookbookNames]);
+
+  const selectedRecipePlannedSlots = useMemo(() => {
+    if (!selectedRecipeForView?.id) {
+      return [];
+    }
+
+    const normalizedRecipeId = String(selectedRecipeForView.id);
+    const planSlotRows = [];
+
+    Object.entries(mealPlansByDate).forEach(([planDate, planRow]) => {
+      if (!planRow) {
+        return;
+      }
+
+      const dayLabel = (() => {
+        const parsedDate = parseIsoDate(planDate);
+        if (!parsedDate || Number.isNaN(parsedDate.getTime())) {
+          return planDate;
+        }
+
+        const dateFormatter = new Intl.DateTimeFormat('es-ES', {
+          weekday: 'long',
+          day: 'numeric',
+          month: 'short',
+        });
+        return dateFormatter.format(parsedDate);
+      })();
+
+      const slotLabels = [];
+      if (String(planRow.breakfast_recipe_id) === normalizedRecipeId) {
+        slotLabels.push('Desayuno');
+      }
+      if (String(planRow.snack_recipe_id) === normalizedRecipeId) {
+        slotLabels.push('Snack');
+      }
+      if (String(planRow.lunch_recipe_id) === normalizedRecipeId) {
+        slotLabels.push('Almuerzo');
+      }
+      if (String(planRow.dinner_recipe_id) === normalizedRecipeId) {
+        slotLabels.push('Cena');
+      }
+
+      if (slotLabels.length > 0) {
+        planSlotRows.push(`${dayLabel}: ${slotLabels.join(', ')}`);
+      }
+    });
+
+    return planSlotRows;
+  }, [mealPlansByDate, selectedRecipeForView]);
+
+  const selectedRecipeShoppingIngredientCoverage = useMemo(() => {
+    if (!selectedRecipeForView?.id) {
+      return [];
+    }
+
+    const recipeName = normalizeRecipeIngredientText(selectedRecipeForView?.name || recipeDetailDraft.title || '');
+    const normalizedRecipeIngredients = (recipeDetailDraft.ingredients || [])
+      .map((item) => normalizeRecipeIngredientText(item))
+      .filter((item) => item.length > 0);
+
+    if (normalizedRecipeIngredients.length === 0 || shoppingItems.length === 0) {
+      return [];
+    }
+
+    const ingredientsInList = new Set();
+    shoppingItems.forEach((item) => {
+      if (!item || item.is_completed) {
+        return;
+      }
+
+      const { displayName, sourceRecipeName } = decodeShoppingItemName(item.name);
+      const normalizedSource = normalizeRecipeIngredientText(sourceRecipeName);
+      const normalizedDisplay = normalizeRecipeIngredientText(displayName);
+      if (
+        normalizedSource &&
+        recipeName &&
+        (normalizedSource === recipeName || normalizedSource.includes(recipeName) || recipeName.includes(normalizedSource))
+      ) {
+        ingredientsInList.add(normalizedDisplay);
+        return;
+      }
+
+      if (
+        normalizedDisplay &&
+        normalizedRecipeIngredients.some(
+          (ingredient) =>
+            normalizedDisplay === ingredient ||
+            normalizedDisplay.includes(ingredient) ||
+            ingredient.includes(normalizedDisplay)
+        )
+      ) {
+        ingredientsInList.add(normalizedDisplay);
+      }
+    });
+
+    return Array.from(ingredientsInList).filter((itemName) => Boolean(itemName));
+  }, [recipeDetailDraft.ingredients, recipeDetailDraft.title, selectedRecipeForView?.id, shoppingItems]);
   const planMealOptions = useMemo(
     () => [
       { key: 'desayuno', label: 'Desayuno', column: 'breakfast_recipe_id' },
@@ -621,8 +1035,29 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
     }
   }, [activeTab, loadMealPlansForWeek]);
 
-  const handleAddCookbook = async () => {
-    const name = cookbookInput.trim();
+  const recipeSearchScopeOptions = useMemo(
+    () => [
+      { key: 'mine', label: 'Mis recetas' },
+      { key: 'savemydish', label: 'SaveMyDish' },
+      { key: 'all', label: 'Todo' },
+    ],
+    []
+  );
+
+  const recipeSearchPlaceholder = useMemo(() => {
+    if (recipeSearchScope === 'mine') {
+      return 'Buscar en Mis recetas...';
+    }
+
+    if (recipeSearchScope === 'savemydish') {
+      return 'Buscar en SaveMyDish...';
+    }
+
+    return 'Buscar en Todo...';
+  }, [recipeSearchScope]);
+
+  const handleAddCookbook = async (nameOverride = '') => {
+    const name = String(nameOverride || '').trim();
     if (!name) {
       return;
     }
@@ -651,15 +1086,44 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
       return;
     }
 
-    setCookbooks((prevCookbooks) => [
-      {
-        ...data,
-        recipeCount: 0,
-        previewRecipes: [],
-      },
-      ...prevCookbooks,
-    ]);
-    setCookbookInput('');
+    const nextCreatedCookbook = {
+      ...data,
+      recipeCount: 0,
+      previewRecipes: [],
+    };
+    setCookbooks((prevCookbooks) => {
+      const nextCookbooks = [nextCreatedCookbook, ...prevCookbooks];
+      const nextTimestamp = Date.now();
+      lastCookbooksLoadAtRef.current = nextTimestamp;
+      AsyncStorage.setItem(
+        `smd:cookbooks:${userId}`,
+        JSON.stringify({
+          timestamp: nextTimestamp,
+          cookbooks: nextCookbooks,
+        })
+      ).catch(() => {});
+      return nextCookbooks;
+    });
+    setNewCookbookName('');
+    setIsCreateCookbookSheetOpen(false);
+  };
+
+  const handleOpenNewCookbookCard = () => {
+    if (isMutatingCookbooks) {
+      return;
+    }
+
+    setCookbookFeedback('');
+    setNewCookbookName('');
+    setIsCreateCookbookSheetOpen(true);
+  };
+
+  const closeCreateCookbookSheet = () => {
+    if (isMutatingCookbooks) {
+      return;
+    }
+
+    setIsCreateCookbookSheetOpen(false);
   };
 
   const handleAddItem = async () => {
@@ -769,7 +1233,112 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
   const canClearCompleted = completedCount > 0;
   const canClearAll = shoppingItems.length > 0;
 
+  const persistRecipeViewFeedback = useCallback(
+    async (recipeId, nextValues = {}) => {
+      if (!supabase || !isSupabaseConfigured || !userId || !recipeId) {
+        return;
+      }
+
+      const recipeIdNumber = Number(recipeId);
+      if (!Number.isFinite(recipeIdNumber)) {
+        return;
+      }
+
+      const key = String(recipeId);
+      const nextIsCooked =
+        typeof nextValues.is_cooked === 'boolean'
+          ? nextValues.is_cooked
+          : Boolean(recipeCookedById[key]);
+      const rawRating =
+        nextValues.rating === undefined ? Number(recipeRatingById[key] || 0) : Number(nextValues.rating || 0);
+      const nextRating = Math.max(0, Math.min(5, Number.isFinite(rawRating) ? rawRating : 0));
+      const nextNote =
+        nextValues.note === undefined ? String(recipeNoteById[key] || '') : String(nextValues.note || '');
+
+      const { error } = await supabase.from('recipe_user_feedback').upsert(
+        {
+          user_id: userId,
+          recipe_id: recipeIdNumber,
+          is_cooked: nextIsCooked,
+          rating: nextRating,
+          note: nextNote,
+        },
+        { onConflict: 'user_id,recipe_id' }
+      );
+
+      if (error) {
+        setRecipeDetailFeedback('No se pudo guardar calificación/nota.');
+      }
+    },
+    [recipeCookedById, recipeNoteById, recipeRatingById, userId]
+  );
+
+  const loadRecipeViewFeedback = useCallback(
+    async (recipeId) => {
+      if (!supabase || !isSupabaseConfigured || !userId || !recipeId) {
+        return;
+      }
+
+      const recipeIdNumber = Number(recipeId);
+      if (!Number.isFinite(recipeIdNumber)) {
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('recipe_user_feedback')
+        .select('is_cooked, rating, note')
+        .eq('user_id', userId)
+        .eq('recipe_id', recipeIdNumber)
+        .maybeSingle();
+
+      if (error) {
+        return;
+      }
+
+      const key = String(recipeId);
+      setRecipeCookedById((prevValue) => ({
+        ...prevValue,
+        [key]: Boolean(data?.is_cooked),
+      }));
+      setRecipeRatingById((prevValue) => ({
+        ...prevValue,
+        [key]: Number(data?.rating || 0),
+      }));
+      setRecipeNoteById((prevValue) => ({
+        ...prevValue,
+        [key]: String(data?.note || ''),
+      }));
+    },
+    [userId]
+  );
+
+  useEffect(() => {
+    if (recipeDetailMode !== 'view' || !selectedRecipeForView?.id) {
+      return;
+    }
+
+    loadRecipeViewFeedback(selectedRecipeForView.id);
+  }, [loadRecipeViewFeedback, recipeDetailMode, selectedRecipeForView?.id]);
+
   const renderRecipeDetailView = () => {
+    const isEditingRecipeDetail = recipeDetailMode === 'edit';
+    const recipeSourceUrl = String(selectedRecipeForView?.source_url || '').trim();
+    const selectedRecipeIdKey = String(selectedRecipeForView?.id || '');
+    const isRecipeMarkedCooked = Boolean(recipeCookedById[selectedRecipeIdKey]);
+    const recipeRating = Number(recipeRatingById[selectedRecipeIdKey] || 0);
+    const recipeNote = String(recipeNoteById[selectedRecipeIdKey] || '');
+    const recipeHeroContent = recipeDetailDraft.mainPhotoUrl ? (
+      <Image
+        source={{ uri: recipeDetailDraft.mainPhotoUrl }}
+        style={styles.recipeDetailHeroImage}
+        resizeMode="cover"
+      />
+    ) : (
+      <View style={styles.recipeDetailHeroPlaceholder}>
+        <Ionicons name="image-outline" size={34} color={palette.accent} />
+      </View>
+    );
+
     return (
       <View>
         <View style={styles.recipeDetailTopRow}>
@@ -779,34 +1348,247 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
           </TouchableOpacity>
 
           {canEditSelectedRecipe ? (
-            <TouchableOpacity
-              style={styles.recipeDetailEditButton}
-              onPress={handleOpenManualRecipeEditForm}
-            >
-              <Text style={styles.recipeDetailEditButtonText}>Editar</Text>
-            </TouchableOpacity>
+            isEditingRecipeDetail ? (
+              <View style={styles.recipeDetailEditActions}>
+                <TouchableOpacity
+                  style={[styles.recipeDetailEditButton, isSavingRecipeDetail && styles.buttonDisabled]}
+                  onPress={handleCancelRecipeDetailEdit}
+                  disabled={isSavingRecipeDetail}
+                >
+                  <Text style={styles.recipeDetailEditButtonText}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.recipeDetailEditButton,
+                    styles.recipeDetailEditButtonPrimary,
+                    isSavingRecipeDetail && styles.buttonDisabled,
+                  ]}
+                  onPress={handleSaveRecipeDetail}
+                  disabled={isSavingRecipeDetail}
+                >
+                  <Text style={[styles.recipeDetailEditButtonText, styles.recipeDetailEditButtonTextPrimary]}>
+                    {isSavingRecipeDetail ? 'Guardando...' : 'Guardar'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.recipeDetailEditButton}
+                onPress={handleOpenManualRecipeEditForm}
+              >
+                <Text style={styles.recipeDetailEditButtonText}>Editar</Text>
+              </TouchableOpacity>
+            )
           ) : null}
         </View>
 
         <View style={styles.recipeDetailHero}>
-          <View style={styles.recipeDetailHeroTouchable}>
-            {recipeDetailDraft.mainPhotoUrl ? (
-              <Image
-                source={{ uri: recipeDetailDraft.mainPhotoUrl }}
-                style={styles.recipeDetailHeroImage}
-                resizeMode="cover"
-              />
-            ) : (
-              <View style={styles.recipeDetailHeroPlaceholder}>
-                <Ionicons name="image-outline" size={34} color={palette.accent} />
-              </View>
-            )}
-          </View>
+          {isEditingRecipeDetail ? (
+            <TouchableOpacity
+              style={styles.recipeDetailHeroTouchable}
+              onPress={handlePickRecipeDetailPhoto}
+              activeOpacity={0.9}
+              disabled={isSavingRecipeDetail}
+            >
+              {recipeHeroContent}
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.recipeDetailHeroTouchable}>{recipeHeroContent}</View>
+          )}
         </View>
 
         <View style={styles.recipeDetailTitleBar}>
-          <Text style={styles.recipeDetailTitleText}>{recipeDetailDraft.title || 'Sin título'}</Text>
+          {isEditingRecipeDetail ? (
+            <TextInput
+              style={styles.recipeDetailTitleInput}
+              value={recipeDetailDraft.title}
+              onChangeText={(value) =>
+                setRecipeDetailDraft((prevDraft) => ({
+                  ...prevDraft,
+                  title: value,
+                }))
+              }
+              placeholder="Título..."
+              placeholderTextColor="#D6E2F2"
+              editable={!isSavingRecipeDetail}
+            />
+          ) : (
+            <Text style={styles.recipeDetailTitleText}>{recipeDetailDraft.title || 'Sin título'}</Text>
+          )}
         </View>
+
+        <View style={styles.recipeDetailInfoBox}>
+          <View style={styles.recipeDetailInfoRow}>
+            <Ionicons name="book-outline" size={16} color={palette.accent} />
+            <Text style={styles.recipeDetailInfoText}>{selectedRecipeCookbookSummary}</Text>
+          </View>
+
+          <View style={styles.recipeDetailInfoRow}>
+            <Ionicons name="calendar-outline" size={16} color={palette.accent} />
+            <Text style={styles.recipeDetailInfoText}>
+              {selectedRecipePlannedSlots.length > 0
+                ? selectedRecipePlannedSlots.join(' · ')
+                : 'Sin planificar en la semana cargada.'}
+            </Text>
+          </View>
+
+          <View style={styles.recipeDetailInfoRow}>
+            <Ionicons
+              name={(isEditingRecipeDetail ? recipeDetailDraft.isPublic : selectedRecipeForView?.is_public)
+                ? 'globe-outline'
+                : 'lock-closed-outline'}
+              size={16}
+              color={palette.accent}
+            />
+            <Text style={styles.recipeDetailInfoText}>
+              {(isEditingRecipeDetail ? recipeDetailDraft.isPublic : selectedRecipeForView?.is_public)
+                ? 'Receta pública'
+                : 'Receta privada'}
+            </Text>
+          </View>
+
+          <View style={styles.recipeDetailInfoRow}>
+            <Ionicons name="cart-outline" size={16} color={palette.accent} />
+            <Text style={styles.recipeDetailInfoText}>
+              {selectedRecipeShoppingIngredientCoverage.length > 0
+                ? `${selectedRecipeShoppingIngredientCoverage.length} ingredientes pendientes`
+                : 'Sin ingredientes pendientes'}
+            </Text>
+          </View>
+
+          {recipeSourceUrl ? (
+            <TouchableOpacity
+              style={[styles.recipeDetailInfoRow, styles.recipeDetailSourceRow]}
+              onPress={() => {
+                Linking.openURL(recipeSourceUrl).catch(() => {
+                  setRecipeDetailFeedback('No se pudo abrir el enlace de origen.');
+                });
+              }}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="link-outline" size={16} color={palette.accent} />
+              <Text style={[styles.recipeDetailInfoText, styles.recipeDetailSourceText]}>
+                Origen
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        {!isEditingRecipeDetail ? (
+          <View style={styles.recipeViewActionsCard}>
+            <View style={styles.recipeViewActionsHeader}>
+              <TouchableOpacity
+                style={styles.recipeCookedToggleButton}
+                activeOpacity={0.8}
+                onPress={() => {
+                  if (!selectedRecipeIdKey) {
+                    return;
+                  }
+                  const nextIsCooked = !isRecipeMarkedCooked;
+                  setRecipeCookedById((prevValue) => ({
+                    ...prevValue,
+                    [selectedRecipeIdKey]: nextIsCooked,
+                  }));
+                  void persistRecipeViewFeedback(selectedRecipeIdKey, {
+                    is_cooked: nextIsCooked,
+                    rating: recipeRating,
+                    note: recipeNote,
+                  });
+                }}
+              >
+                <Text style={styles.recipeCookedToggleText}>Marcar como cocinado</Text>
+                <View
+                  style={[
+                    styles.recipeCookedToggleIconWrap,
+                    isRecipeMarkedCooked && styles.recipeCookedToggleIconWrapActive,
+                  ]}
+                >
+                  <Ionicons
+                    name="checkmark"
+                    size={18}
+                    color={isRecipeMarkedCooked ? palette.card : '#AFAAA2'}
+                  />
+                </View>
+              </TouchableOpacity>
+
+              <View style={styles.recipeRatingStarsWrap}>
+                {[1, 2, 3, 4, 5].map((value) => (
+                  <TouchableOpacity
+                    key={`recipe-rating-${value}`}
+                    activeOpacity={0.75}
+                    onPress={() => {
+                      if (!selectedRecipeIdKey) {
+                        return;
+                      }
+                      const nextRating = recipeRating === value ? 0 : value;
+                      setRecipeRatingById((prevValue) => ({
+                        ...prevValue,
+                        [selectedRecipeIdKey]: nextRating,
+                      }));
+                      void persistRecipeViewFeedback(selectedRecipeIdKey, {
+                        is_cooked: isRecipeMarkedCooked,
+                        rating: nextRating,
+                        note: recipeNote,
+                      });
+                    }}
+                  >
+                    <Ionicons
+                      name={value <= recipeRating ? 'star' : 'star-outline'}
+                      size={24}
+                      color={value <= recipeRating ? '#C7B073' : '#DDD8D0'}
+                    />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            <TextInput
+              style={styles.recipeCookedNoteInput}
+              value={recipeNote}
+              onChangeText={(value) => {
+                if (!selectedRecipeIdKey) {
+                  return;
+                }
+                setRecipeNoteById((prevValue) => ({
+                  ...prevValue,
+                  [selectedRecipeIdKey]: value,
+                }));
+              }}
+              placeholder="Añadir nota"
+              placeholderTextColor="#AFAAA2"
+              multiline
+              textAlignVertical="top"
+              onEndEditing={() => {
+                if (!selectedRecipeIdKey) {
+                  return;
+                }
+
+                void persistRecipeViewFeedback(selectedRecipeIdKey, {
+                  is_cooked: isRecipeMarkedCooked,
+                  rating: recipeRating,
+                  note: recipeNote,
+                });
+              }}
+            />
+          </View>
+        ) : null}
+
+        {isEditingRecipeDetail ? (
+          <TouchableOpacity
+            style={styles.recipeVisibilityToggle}
+            onPress={() =>
+              setRecipeDetailDraft((prevDraft) => ({
+                ...prevDraft,
+                isPublic: !prevDraft.isPublic,
+              }))
+            }
+            disabled={isSavingRecipeDetail}
+          >
+            <Text style={styles.recipeVisibilityToggleText}>
+              {recipeDetailDraft.isPublic ? 'Cambiar a Privada' : 'Cambiar a Pública'}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
 
         <View style={styles.recipeDetailBody}>
           <View style={styles.manualQuickActionsRow}>
@@ -833,7 +1615,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
               onPress={handleOpenRecipeListPicker}
             >
               <View style={styles.manualQuickActionIcon}>
-                <Ionicons name="checkbox-outline" size={20} color={palette.accent} />
+                <Ionicons name="basket-outline" size={20} color={palette.accent} />
               </View>
               <Text style={styles.manualQuickActionText}>Lista</Text>
             </TouchableOpacity>
@@ -848,27 +1630,113 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
             </TouchableOpacity>
           </View>
 
-          {recipeDetailDraft.description ? (
+          {isEditingRecipeDetail || recipeDetailDraft.description ? (
             <View style={styles.recipeDetailDescriptionWrap}>
-              <Text style={styles.recipeDetailDescription}>{recipeDetailDraft.description}</Text>
+              {isEditingRecipeDetail ? (
+                <TextInput
+                  style={styles.recipeDetailDescriptionInput}
+                  value={recipeDetailDraft.description}
+                  onChangeText={(value) =>
+                    setRecipeDetailDraft((prevDraft) => ({
+                      ...prevDraft,
+                      description: value,
+                    }))
+                  }
+                  placeholder="Agrega una descripcion breve..."
+                  placeholderTextColor={palette.mutedText}
+                  multiline
+                  numberOfLines={3}
+                  textAlignVertical="top"
+                  editable={!isSavingRecipeDetail}
+                />
+              ) : (
+                <Text style={styles.recipeDetailDescription}>{recipeDetailDraft.description}</Text>
+              )}
             </View>
           ) : null}
 
           <Text style={styles.manualSectionTitle}>Ingredientes</Text>
           {recipeDetailDraft.ingredients.map((item, index) => (
             <View key={`detail-ingredient-${index}`} style={styles.manualListRow}>
-              <Text style={styles.recipeDetailBullet}>•</Text>
-              <Text style={styles.recipeDetailReadText}>{item || '-'}</Text>
+              {isEditingRecipeDetail ? (
+                <TouchableOpacity
+                  style={[
+                    styles.manualDeleteItemButton,
+                    (recipeDetailDraft.ingredients.length <= 1 || isSavingRecipeDetail) && styles.buttonDisabled,
+                  ]}
+                  onPress={() => removeRecipeDraftIngredient(index)}
+                  disabled={recipeDetailDraft.ingredients.length <= 1 || isSavingRecipeDetail}
+                >
+                  <Ionicons name="remove-circle-outline" size={18} color="#8B9AAA" />
+                </TouchableOpacity>
+              ) : (
+                <Text style={styles.recipeDetailBullet}>•</Text>
+              )}
+
+              {isEditingRecipeDetail ? (
+                <TextInput
+                  style={styles.manualListInput}
+                  value={item}
+                  onChangeText={(value) => updateRecipeDraftIngredient(index, value)}
+                  placeholder="Agregar ingrediente..."
+                  placeholderTextColor={palette.mutedText}
+                  editable={!isSavingRecipeDetail}
+                />
+              ) : (
+                <Text style={styles.recipeDetailReadText}>{item || '-'}</Text>
+              )}
             </View>
           ))}
+          {isEditingRecipeDetail ? (
+            <TouchableOpacity
+              style={[styles.manualAddMiniButton, isSavingRecipeDetail && styles.buttonDisabled]}
+              onPress={addRecipeDraftIngredient}
+              disabled={isSavingRecipeDetail}
+            >
+              <Ionicons name="add" size={18} color={palette.card} />
+            </TouchableOpacity>
+          ) : null}
 
           <Text style={[styles.manualSectionTitle, styles.manualSectionSpacing]}>Preparación</Text>
           {recipeDetailDraft.steps.map((item, index) => (
             <View key={`detail-step-${index}`} style={styles.manualListRow}>
+              {isEditingRecipeDetail ? (
+                <TouchableOpacity
+                  style={[
+                    styles.manualDeleteItemButton,
+                    (recipeDetailDraft.steps.length <= 1 || isSavingRecipeDetail) && styles.buttonDisabled,
+                  ]}
+                  onPress={() => removeRecipeDraftStep(index)}
+                  disabled={recipeDetailDraft.steps.length <= 1 || isSavingRecipeDetail}
+                >
+                  <Ionicons name="remove-circle-outline" size={18} color="#8B9AAA" />
+                </TouchableOpacity>
+              ) : null}
+
               <Text style={styles.manualStepNumber}>{index + 1}.</Text>
-              <Text style={styles.recipeDetailReadText}>{item || '-'}</Text>
+              {isEditingRecipeDetail ? (
+                <TextInput
+                  style={styles.manualListInput}
+                  value={item}
+                  onChangeText={(value) => updateRecipeDraftStep(index, value)}
+                  placeholder="Agregar preparación..."
+                  placeholderTextColor={palette.mutedText}
+                  editable={!isSavingRecipeDetail}
+                />
+              ) : (
+                <Text style={styles.recipeDetailReadText}>{item || '-'}</Text>
+              )}
             </View>
           ))}
+          {isEditingRecipeDetail ? (
+            <TouchableOpacity
+              style={[styles.manualAddMiniButton, isSavingRecipeDetail && styles.buttonDisabled]}
+              onPress={addRecipeDraftStep}
+              disabled={isSavingRecipeDetail}
+            >
+              <Ionicons name="add" size={18} color={palette.card} />
+            </TouchableOpacity>
+          ) : null}
 
           {recipeDetailFeedback ? <Text style={styles.feedback}>{recipeDetailFeedback}</Text> : null}
         </View>
@@ -1046,49 +1914,62 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
 
         {selectedCookbookForView?.recipes?.length ? (
           <View style={styles.cookbookRecipesScreenList}>
-            {selectedCookbookForView.recipes.map((recipe) => (
-              <TouchableOpacity
-                key={`cookbook-recipe-${selectedCookbookForView.id}-${recipe.id}`}
-                style={[
-                  styles.cookbookRecipeItem,
-                  isSelectionActive &&
-                    selectedCookbookRecipeIds.includes(recipe.id) &&
-                    styles.cookbookRecipeItemSelected,
-                ]}
-                onPress={() => {
-                  if (isSelectionActive && canManageSelectedCookbook) {
-                    toggleCookbookRecipeSelection(recipe.id);
-                    return;
-                  }
+            {selectedCookbookForView.recipes.map((recipe) => {
+              const recipeDescriptionPreview =
+                splitRecipeDescription(recipe.description || '').descriptionText ||
+                String(recipe.description || '').trim() ||
+                'Sin descripción';
 
-                  handleOpenRecipeDetail(recipe);
-                }}
-                activeOpacity={isSelectionActive ? 0.8 : 1}
-              >
-                <View style={styles.cookbookRecipeThumb}>
-                  {recipe.main_photo_url ? (
-                    <Image
-                      source={{ uri: recipe.main_photo_url }}
-                      style={styles.previewImage}
-                      resizeMode="cover"
+              return (
+                <TouchableOpacity
+                  key={`cookbook-recipe-${selectedCookbookForView.id}-${recipe.id}`}
+                  style={[
+                    styles.cookbookRecipeItem,
+                    isSelectionActive &&
+                      selectedCookbookRecipeIds.includes(recipe.id) &&
+                      styles.cookbookRecipeItemSelected,
+                  ]}
+                  onPress={() => {
+                    if (isSelectionActive && canManageSelectedCookbook) {
+                      toggleCookbookRecipeSelection(recipe.id);
+                      return;
+                    }
+
+                    handleOpenRecipeDetail(recipe);
+                  }}
+                  activeOpacity={isSelectionActive ? 0.8 : 1}
+                >
+                  <View style={styles.cookbookRecipeThumb}>
+                    {recipe.main_photo_url ? (
+                      <Image
+                        source={{ uri: recipe.main_photo_url }}
+                        style={styles.previewImage}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View style={styles.previewPlaceholder}>
+                        <Ionicons name="restaurant-outline" size={16} color={palette.accent} />
+                      </View>
+                    )}
+                  </View>
+                  {isSelectionActive ? (
+                    <Ionicons
+                      name={selectedCookbookRecipeIds.includes(recipe.id) ? 'checkmark-circle' : 'ellipse-outline'}
+                      size={20}
+                      color={selectedCookbookRecipeIds.includes(recipe.id) ? palette.button : '#8B9AAA'}
+                      style={styles.cookbookRecipeSelectIcon}
                     />
-                  ) : (
-                    <View style={styles.previewPlaceholder}>
-                      <Ionicons name="restaurant-outline" size={16} color={palette.accent} />
-                    </View>
-                  )}
-                </View>
-                {isSelectionActive ? (
-                  <Ionicons
-                    name={selectedCookbookRecipeIds.includes(recipe.id) ? 'checkmark-circle' : 'ellipse-outline'}
-                    size={20}
-                    color={selectedCookbookRecipeIds.includes(recipe.id) ? palette.button : '#8B9AAA'}
-                    style={styles.cookbookRecipeSelectIcon}
-                  />
-                ) : null}
-                <Text style={styles.cookbookRecipeName}>{recipe.name}</Text>
-              </TouchableOpacity>
-            ))}
+                  ) : null}
+
+                  <View style={styles.recipeSearchResultContent}>
+                    <Text style={styles.cookbookRecipeName}>{recipe.name}</Text>
+                    <Text style={styles.cookbookRecipeDescription} numberOfLines={2}>
+                      {recipeDescriptionPreview}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         ) : (
           <Text style={styles.emptyText}>Este recetario aún no tiene recetas.</Text>
@@ -1097,122 +1978,243 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
     );
   };
 
-  const renderRecetasView = () => (
-    <View>
-      {selectedCookbookForView ? (
-        renderCookbookRecipesView()
-      ) : (
-        <>
-      <Text style={styles.title}>Recetarios</Text>
-      <Text style={styles.body}>
-        Estos recetarios son públicos. Puedes crear uno nuevo y luego agregar recetas.
-      </Text>
+  const renderRecetasView = () => {
+    const hasSearchQuery = cookbookSearchQuery.trim().length > 0;
 
-      {!isSupabaseConfigured ? (
-        <View style={styles.warningCard}>
-          <Text style={styles.warningText}>
-            Configura `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY` para usar recetarios.
-          </Text>
-        </View>
-      ) : null}
+    return (
+      <View>
+        {selectedCookbookForView ? (
+          renderCookbookRecipesView()
+        ) : (
+          <>
+            <Text style={styles.title}>Recetarios</Text>
+            <Text style={styles.body}>
+              Tus recetarios son privados. Solo las recetas pueden publicarse si tú lo decides.
+            </Text>
 
-      <View style={styles.inputRow}>
-        <TextInput
-          style={styles.input}
-          placeholder="Nombre del recetario"
-          placeholderTextColor={palette.mutedText}
-          value={cookbookInput}
-          onChangeText={setCookbookInput}
-          editable={!isMutatingCookbooks}
-          onSubmitEditing={handleAddCookbook}
-          returnKeyType="done"
-        />
-        <TouchableOpacity
-          style={[styles.addButton, (isMutatingCookbooks || !cookbookInput.trim()) && styles.buttonDisabled]}
-          onPress={handleAddCookbook}
-          disabled={isMutatingCookbooks || !cookbookInput.trim()}
-        >
-          <Ionicons name="add" size={20} color={palette.card} />
-        </TouchableOpacity>
-      </View>
+            {!isSupabaseConfigured ? (
+              <View style={styles.warningCard}>
+                <Text style={styles.warningText}>
+                  Configura `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY` para usar recetarios.
+                </Text>
+              </View>
+            ) : null}
 
-      {cookbookFeedback ? <Text style={styles.feedback}>{cookbookFeedback}</Text> : null}
+            <View style={styles.recipesSearchWrap}>
+              <View style={styles.recipeSearchInputWrap}>
+                <TextInput
+                  style={styles.recipesSearchInput}
+                  placeholder={recipeSearchPlaceholder}
+                  placeholderTextColor={palette.mutedText}
+                  value={cookbookSearchQuery}
+                  onChangeText={setCookbookSearchQuery}
+                  editable={!isMutatingCookbooks}
+                  returnKeyType="search"
+                  onFocus={() => setIsRecipeSearchScopeMenuOpen(false)}
+                />
+                <TouchableOpacity
+                  style={styles.recipeSearchFilterButton}
+                  onPress={() => setIsRecipeSearchScopeMenuOpen((prevValue) => !prevValue)}
+                >
+                  <Ionicons name="options-outline" size={18} color={palette.accent} />
+                </TouchableOpacity>
+              </View>
 
-      {isCookbooksLoading ? (
-        <View style={styles.loadingWrap}>
-          <ActivityIndicator size="small" color={palette.accent} />
-        </View>
-      ) : (
-        <View style={styles.cookbooksList}>
-          {cookbooks.length === 0 ? (
-            <Text style={styles.emptyText}>Aún no hay recetarios creados.</Text>
-          ) : (
-            cookbooks.map((cookbook) => (
-              <TouchableOpacity
-                key={cookbook.id}
-                style={styles.cookbookCard}
-                activeOpacity={0.85}
-                onPress={() => handleOpenCookbookRecipes(cookbook)}
-              >
-                <View style={styles.cookbookPreview}>
-                  <View style={styles.previewLeft}>
-                    {cookbook.previewRecipes?.[0]?.main_photo_url ? (
-                      <Image
-                        source={{ uri: cookbook.previewRecipes[0].main_photo_url }}
-                        style={styles.previewImage}
-                        resizeMode="cover"
-                      />
-                    ) : (
-                      <View style={styles.previewPlaceholder}>
-                        <Ionicons name="restaurant-outline" size={20} color={palette.accent} />
+              {isRecipeSearchScopeMenuOpen ? (
+                <View style={styles.recipeSearchScopeMenu}>
+                  {recipeSearchScopeOptions.map((option) => {
+                    const isSelectedScope = option.key === recipeSearchScope;
+                    return (
+                      <TouchableOpacity
+                        key={`recipe-search-scope-${option.key}`}
+                        style={styles.recipeSearchScopeMenuItem}
+                        onPress={() => {
+                          setRecipeSearchScope(option.key);
+                          setIsRecipeSearchScopeMenuOpen(false);
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.recipeSearchScopeMenuText,
+                            isSelectedScope && styles.recipeSearchScopeMenuTextActive,
+                          ]}
+                        >
+                          {option.label}
+                        </Text>
+                        {isSelectedScope ? (
+                          <Ionicons name="checkmark" size={16} color={palette.accent} />
+                        ) : null}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ) : null}
+            </View>
+
+            {cookbookFeedback ? <Text style={styles.feedback}>{cookbookFeedback}</Text> : null}
+
+            {hasSearchQuery ? (
+              isSearchingRecipes ? (
+                <View style={styles.loadingWrap}>
+                  <ActivityIndicator size="small" color={palette.accent} />
+                </View>
+              ) : recipeSearchResults.length > 0 ? (
+                <View style={styles.cookbookRecipesScreenList}>
+                  {recipeSearchResults.map((recipe) => {
+                    const isRecipeFromAnotherUser =
+                      String(recipe.owner_user_id || '') !== String(userId || '');
+                    const recipeIsAuthor = isAuthorRecipe(recipe);
+                    const recipeDescriptionPreview =
+                      splitRecipeDescription(recipe.description || '').descriptionText ||
+                      String(recipe.description || '').trim() ||
+                      'Sin descripción';
+
+                    return (
+                      <TouchableOpacity
+                        key={`recipe-search-result-${recipe.id}`}
+                        style={styles.cookbookRecipeItem}
+                        activeOpacity={0.85}
+                        onPress={() => handleOpenRecipeDetail(recipe)}
+                      >
+                        <View style={styles.cookbookRecipeThumb}>
+                          {recipe.main_photo_url ? (
+                            <Image
+                              source={{ uri: recipe.main_photo_url }}
+                              style={styles.previewImage}
+                              resizeMode="cover"
+                            />
+                          ) : (
+                            <View style={styles.previewPlaceholder}>
+                              <Ionicons name="restaurant-outline" size={16} color={palette.accent} />
+                            </View>
+                          )}
+                        </View>
+
+                        <View style={styles.recipeSearchResultContent}>
+                          <View style={styles.recipeSearchResultTitleRow}>
+                            <Text style={styles.cookbookRecipeName}>{recipe.name}</Text>
+                            {recipeIsAuthor ? (
+                              <Ionicons
+                                name="checkmark-circle"
+                                size={16}
+                                color="#1D9BF0"
+                                style={styles.recipeSearchAuthorBadge}
+                              />
+                            ) : null}
+                          </View>
+
+                          <Text style={styles.cookbookRecipeDescription} numberOfLines={2}>
+                            {recipeDescriptionPreview}
+                          </Text>
+
+                          {isRecipeFromAnotherUser ? (
+                            <Text style={styles.recipeSearchResultMeta}>
+                              <Text style={styles.recipeSearchResultMetaPrefix}>Por </Text>
+                              <Text style={styles.recipeSearchResultMetaName}>
+                                {getRecipeOwnerLabel(recipe)}
+                              </Text>
+                              {recipeIsAuthor ? (
+                                <Text style={styles.recipeSearchResultMetaAuthor}> · de Autor</Text>
+                              ) : null}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ) : (
+                <Text style={styles.emptyText}>{recipeSearchFeedback || 'No se encontraron recetas.'}</Text>
+              )
+            ) : isCookbooksLoading ? (
+              <View style={styles.loadingWrap}>
+                <ActivityIndicator size="small" color={palette.accent} />
+              </View>
+            ) : (
+              <>
+                <View style={styles.cookbooksList}>
+                  {cookbooks.map((cookbook) => (
+                    <TouchableOpacity
+                      key={cookbook.id}
+                      style={styles.cookbookCard}
+                      activeOpacity={0.85}
+                      onPress={() => handleOpenCookbookRecipes(cookbook)}
+                    >
+                      <View style={styles.cookbookPreview}>
+                        <View style={styles.previewLeft}>
+                          {cookbook.previewRecipes?.[0]?.main_photo_url ? (
+                            <Image
+                              source={{ uri: cookbook.previewRecipes[0].main_photo_url }}
+                              style={styles.previewImage}
+                              resizeMode="cover"
+                            />
+                          ) : (
+                            <View style={styles.previewPlaceholder}>
+                              <Ionicons name="restaurant-outline" size={20} color={palette.accent} />
+                            </View>
+                          )}
+                        </View>
+
+                        <View style={styles.previewRight}>
+                          <View style={styles.previewRightTop}>
+                            {cookbook.previewRecipes?.[1]?.main_photo_url ? (
+                              <Image
+                                source={{ uri: cookbook.previewRecipes[1].main_photo_url }}
+                                style={styles.previewImage}
+                                resizeMode="cover"
+                              />
+                            ) : (
+                              <View style={styles.previewPlaceholder}>
+                                <Ionicons name="image-outline" size={18} color={palette.accent} />
+                              </View>
+                            )}
+                          </View>
+
+                          <View style={styles.previewRightBottom}>
+                            {cookbook.previewRecipes?.[2]?.main_photo_url ? (
+                              <Image
+                                source={{ uri: cookbook.previewRecipes[2].main_photo_url }}
+                                style={styles.previewImage}
+                                resizeMode="cover"
+                              />
+                            ) : (
+                              <View style={styles.previewPlaceholder}>
+                                <Ionicons name="image-outline" size={18} color={palette.accent} />
+                              </View>
+                            )}
+                          </View>
+                        </View>
                       </View>
-                    )}
-                  </View>
 
-                  <View style={styles.previewRight}>
-                    <View style={styles.previewRightTop}>
-                      {cookbook.previewRecipes?.[1]?.main_photo_url ? (
-                        <Image
-                          source={{ uri: cookbook.previewRecipes[1].main_photo_url }}
-                          style={styles.previewImage}
-                          resizeMode="cover"
-                        />
-                      ) : (
-                        <View style={styles.previewPlaceholder}>
-                          <Ionicons name="image-outline" size={18} color={palette.accent} />
-                        </View>
-                      )}
-                    </View>
+                      <Text style={styles.cookbookTitle}>{cookbook.name}</Text>
+                      <Text style={styles.cookbookCount}>
+                        {cookbook.recipeCount || 0} {(cookbook.recipeCount || 0) === 1 ? 'receta' : 'recetas'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
 
-                    <View style={styles.previewRightBottom}>
-                      {cookbook.previewRecipes?.[2]?.main_photo_url ? (
-                        <Image
-                          source={{ uri: cookbook.previewRecipes[2].main_photo_url }}
-                          style={styles.previewImage}
-                          resizeMode="cover"
-                        />
-                      ) : (
-                        <View style={styles.previewPlaceholder}>
-                          <Ionicons name="image-outline" size={18} color={palette.accent} />
-                        </View>
-                      )}
+                  <TouchableOpacity
+                    style={styles.cookbookCard}
+                    activeOpacity={0.85}
+                    onPress={handleOpenNewCookbookCard}
+                  >
+                    <View style={[styles.cookbookPreview, styles.newCookbookPreview]}>
+                      <Ionicons name="add" size={38} color={palette.accent} />
                     </View>
-                  </View>
+                    <Text style={styles.cookbookTitle}>Nuevo Recetario</Text>
+                  </TouchableOpacity>
                 </View>
 
-                <Text style={styles.cookbookTitle}>{cookbook.name}</Text>
-                <Text style={styles.cookbookCount}>
-                  {cookbook.recipeCount || 0} {(cookbook.recipeCount || 0) === 1 ? 'receta' : 'recetas'}
-                </Text>
-              </TouchableOpacity>
-            ))
-          )}
-        </View>
-      )}
-        </>
-      )}
-    </View>
-  );
+                {cookbooks.length === 0 ? (
+                  <Text style={styles.emptyText}>Aún no hay recetarios creados.</Text>
+                ) : null}
+              </>
+            )}
+          </>
+        )}
+      </View>
+    );
+  };
 
   const renderListaView = () => (
     <View>
@@ -1521,6 +2523,313 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
     });
   };
 
+  const getEdgeFunctionAuthHeaders = async () => {
+    if (!supabase) {
+      return null;
+    }
+
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      return null;
+    }
+
+    let accessToken = sessionData?.session?.access_token || '';
+    if (!accessToken) {
+      const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError) {
+        return null;
+      }
+      accessToken = refreshedData?.session?.access_token || '';
+    }
+
+    if (!accessToken) {
+      return null;
+    }
+
+    return {
+      Authorization: `Bearer ${accessToken}`,
+    };
+  };
+
+  const handleOpenPasteTextImport = () => {
+    closeCreateRecipeSheet(() => {
+      setPasteRecipeFeedback('');
+      setPasteRecipeText('');
+      setIsPasteTextModalOpen(true);
+    });
+  };
+
+  const handlePasteFromClipboard = async () => {
+    try {
+      if (Platform.OS !== 'web') {
+        const clipboardText = await ExpoClipboard.getStringAsync();
+        const normalizedText = String(clipboardText || '').trim();
+        if (!normalizedText) {
+          setPasteRecipeFeedback('El portapapeles está vacío.');
+          return;
+        }
+
+        setPasteRecipeText(normalizedText);
+        setPasteRecipeFeedback('');
+        return;
+      }
+
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
+        const clipboardText = await navigator.clipboard.readText();
+        const normalizedText = String(clipboardText || '').trim();
+        if (!normalizedText) {
+          setPasteRecipeFeedback('El portapapeles está vacío.');
+          return;
+        }
+
+        setPasteRecipeText(normalizedText);
+        setPasteRecipeFeedback('');
+        return;
+      }
+
+      Alert.alert('Portapapeles', 'En este dispositivo, pega el texto manualmente en el campo.');
+    } catch (_error) {
+      setPasteRecipeFeedback('No se pudo leer el portapapeles.');
+    }
+  };
+
+  const handleImportRecipeFromPastedText = async () => {
+    if (!supabase || !isSupabaseConfigured || !userId) {
+      setPasteRecipeFeedback('Debes iniciar sesión y configurar Supabase para importar.');
+      return;
+    }
+
+    const rawText = pasteRecipeText.trim();
+    if (!rawText) {
+      setPasteRecipeFeedback('Pega o escribe el texto de la receta para importar.');
+      return;
+    }
+
+    const edgeAuthHeaders = await getEdgeFunctionAuthHeaders();
+    if (!edgeAuthHeaders) {
+      setPasteRecipeFeedback('Tu sesión no es válida. Cierra sesión y vuelve a entrar.');
+      return;
+    }
+
+    setIsImportingRecipe(true);
+    setPasteRecipeFeedback('Leyendo...');
+
+    let data;
+    let error;
+    try {
+      const response = await supabase.functions.invoke('import-recipe-from-text', {
+        body: {
+          text: rawText,
+        },
+        headers: edgeAuthHeaders,
+      });
+      data = response.data;
+      error = response.error;
+    } catch (invokeError) {
+      setIsImportingRecipe(false);
+      setPasteRecipeFeedback(
+        invokeError instanceof Error ? invokeError.message : 'Error al procesar el texto.'
+      );
+      return;
+    }
+
+    setIsImportingRecipe(false);
+
+    if (error) {
+      let detailedMessage = error.message || 'No se pudo importar la receta desde texto.';
+      const contextResponse = error.context;
+      if (contextResponse) {
+        try {
+          const payload = await contextResponse.clone().json();
+          if (typeof payload?.error === 'string' && payload.error) {
+            detailedMessage = payload.error;
+          } else if (typeof payload?.message === 'string' && payload.message) {
+            detailedMessage = payload.message;
+          }
+        } catch (_jsonError) {
+          try {
+            const rawErrorText = await contextResponse.clone().text();
+            if (rawErrorText) {
+              detailedMessage = rawErrorText;
+            }
+          } catch (_textError) {
+            // fallback to default message
+          }
+        }
+      }
+
+      setPasteRecipeFeedback(detailedMessage);
+      return;
+    }
+
+    if (data?.error) {
+      setPasteRecipeFeedback(String(data.error));
+      return;
+    }
+
+    const importedRecipeId = data?.recipe?.id;
+    if (!importedRecipeId) {
+      setPasteRecipeFeedback('Se procesó el texto, pero no se pudo abrir la receta.');
+      return;
+    }
+
+    setIsPasteTextModalOpen(false);
+    setPasteRecipeText('');
+    setPasteRecipeFeedback('');
+    await openRecipeInManualEditForm(importedRecipeId, data?.recipe || null);
+  };
+
+  const handleImportRecipeFromImage = async (sourceType) => {
+    if (!supabase || !isSupabaseConfigured || !userId) {
+      Alert.alert('Importar receta', 'Debes iniciar sesión y configurar Supabase para importar.');
+      return;
+    }
+
+    try {
+      let pickerResult = null;
+
+      if (sourceType === 'upload') {
+        if (Platform.OS !== 'web') {
+          const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (permission.status !== 'granted') {
+            Alert.alert('Permiso requerido', 'Debes permitir acceso a tus fotos para subir una imagen.');
+            return;
+          }
+        }
+
+        pickerResult = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          quality: 0.7,
+          base64: true,
+        });
+      } else {
+        if (Platform.OS !== 'web') {
+          const permission = await ImagePicker.requestCameraPermissionsAsync();
+          if (permission.status !== 'granted') {
+            Alert.alert('Permiso requerido', 'Debes permitir acceso a la cámara para tomar una foto.');
+            return;
+          }
+        }
+
+        pickerResult = await ImagePicker.launchCameraAsync({
+          allowsEditing: true,
+          quality: 0.7,
+          base64: true,
+        });
+      }
+
+      if (!pickerResult || pickerResult.canceled || !pickerResult.assets?.length) {
+        return;
+      }
+
+      const selectedAsset = pickerResult.assets[0];
+      const imageBase64 = String(selectedAsset.base64 || '').trim();
+      if (!imageBase64) {
+        Alert.alert('Importar receta', 'No se pudo procesar la imagen. Intenta con otra foto.');
+        return;
+      }
+
+      const mimeType = selectedAsset.mimeType || 'image/jpeg';
+
+      const edgeAuthHeaders = await getEdgeFunctionAuthHeaders();
+      if (!edgeAuthHeaders) {
+        Alert.alert('Importar receta', 'Tu sesión no es válida. Cierra sesión y vuelve a entrar.');
+        return;
+      }
+
+      setIsImportingRecipe(true);
+      setImageImportProgressText('Leyendo Imagen...');
+
+      let data;
+      let error;
+      try {
+        const response = await supabase.functions.invoke('import-recipe-from-image', {
+          body: {
+            image_base64: imageBase64,
+            mime_type: mimeType,
+            source_type: sourceType,
+          },
+          headers: edgeAuthHeaders,
+        });
+        data = response.data;
+        error = response.error;
+      } catch (invokeError) {
+        setIsImportingRecipe(false);
+        setImageImportProgressText('');
+        Alert.alert(
+          'Importar receta',
+          invokeError instanceof Error ? invokeError.message : 'Error al analizar la imagen.'
+        );
+        return;
+      }
+
+      if (error) {
+        setIsImportingRecipe(false);
+        setImageImportProgressText('');
+        let detailedMessage = error.message || 'No se pudo importar la receta desde imagen.';
+        const contextResponse = error.context;
+        if (contextResponse) {
+          try {
+            const payload = await contextResponse.clone().json();
+            if (typeof payload?.error === 'string' && payload.error) {
+              detailedMessage = payload.error;
+            } else if (typeof payload?.message === 'string' && payload.message) {
+              detailedMessage = payload.message;
+            }
+          } catch (_jsonError) {
+            try {
+              const rawText = await contextResponse.clone().text();
+              if (rawText) {
+                detailedMessage = rawText;
+              }
+            } catch (_textError) {
+              // fallback to default message
+            }
+          }
+        }
+
+        Alert.alert('No se detectó una receta', detailedMessage);
+        return;
+      }
+
+      if (data?.error) {
+        setIsImportingRecipe(false);
+        setImageImportProgressText('');
+        Alert.alert('No se detectó una receta', String(data.error));
+        return;
+      }
+
+      const importedRecipeId = data?.recipe?.id;
+      if (!importedRecipeId) {
+        setIsImportingRecipe(false);
+        setImageImportProgressText('');
+        Alert.alert('Importar receta', 'La receta se analizó, pero no se pudo abrir.');
+        return;
+      }
+
+      setImageImportProgressText('Leyendo Imagen...');
+      await openRecipeInManualEditForm(importedRecipeId, data?.recipe || null);
+      setIsImportingRecipe(false);
+      setImageImportProgressText('');
+    } catch (unexpectedError) {
+      setIsImportingRecipe(false);
+      setImageImportProgressText('');
+      Alert.alert(
+        'Importar receta',
+        unexpectedError instanceof Error
+          ? unexpectedError.message
+          : 'Ocurrió un error inesperado al procesar la imagen.'
+      );
+    }
+  };
+
+  const handleOpenCameraImport = () => {
+    closeCreateRecipeSheet(() => {
+      setIsCameraImportPickerOpen(true);
+    });
+  };
+
   const resetManualRecipeForm = () => {
     setManualRecipeEditingId(null);
     setManualRecipeTitle('');
@@ -1528,6 +2837,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
     setManualRecipeDescription('');
     setManualIngredients(['']);
     setManualSteps(['']);
+    setManualIsPublic(false);
     setSelectedCookbookIds([]);
     setManualRecipeFeedback('');
   };
@@ -1546,33 +2856,25 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
     });
   };
 
-  const handleOpenManualRecipeEditForm = async () => {
+  const handleOpenManualRecipeEditForm = () => {
     if (!selectedRecipeForView || !canEditSelectedRecipe) {
       return;
     }
 
-    const { descriptionText, ingredients } = splitRecipeDescription(selectedRecipeForView.description || '');
-    const cleanSteps = normalizeRecipeSteps(selectedRecipeForView.steps, selectedRecipeForView.instructions);
-    const refreshedCookbooks = await loadCookbooks();
-    const sourceOwnCookbooks = Array.isArray(refreshedCookbooks)
-      ? refreshedCookbooks.filter((cookbook) => cookbook.owner_user_id === userId)
-      : ownCookbooks;
+    setRecipeDetailDraft(buildRecipeDetailDraft(selectedRecipeForView));
+    setRecipeDetailMode('edit');
+    setRecipeDetailFeedback('');
+  };
 
-    setManualRecipeEditingId(selectedRecipeForView.id);
-    setManualRecipeTitle(selectedRecipeForView.name || '');
-    setManualMainPhotoUrl(selectedRecipeForView.main_photo_url || '');
-    setManualRecipeDescription(descriptionText);
-    setManualIngredients(ingredients.length > 0 ? ingredients : ['']);
-    setManualSteps(cleanSteps.length > 0 ? cleanSteps : ['']);
-    setSelectedCookbookIds(
-      sourceOwnCookbooks
-        .filter((cookbook) =>
-          (cookbook.recipes || []).some((recipe) => String(recipe.id) === String(selectedRecipeForView.id))
-        )
-        .map((cookbook) => cookbook.id)
-    );
-    setManualRecipeFeedback('');
-    setIsManualRecipeModalOpen(true);
+  const handleCancelRecipeDetailEdit = () => {
+    if (!selectedRecipeForView) {
+      return;
+    }
+
+    setRecipeDetailDraft(buildRecipeDetailDraft(selectedRecipeForView));
+    setRecipeDetailMode('view');
+    setRecipeDetailFeedback('');
+    setIsSavingRecipeDetail(false);
   };
 
   const handleManualQuickAccess = (tabKey) => {
@@ -1594,6 +2896,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
   };
 
   const closeCookbookRecipesView = () => {
+    recipeDetailRequestIdRef.current += 1;
     closePlanAssignModal();
     setSelectedCookbookForView(null);
     setSelectedRecipeForView(null);
@@ -1617,7 +2920,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
   };
 
   const refreshCookbooksAndSelectedCookbook = async (cookbookIdToKeep) => {
-    const refreshedCookbooks = await loadCookbooks();
+    const refreshedCookbooks = await loadCookbooks({ force: true });
     if (!cookbookIdToKeep) {
       return null;
     }
@@ -1641,6 +2944,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
   };
 
   const handleOpenCookbookRecipes = (cookbook) => {
+    recipeDetailRequestIdRef.current += 1;
     setSelectedCookbookForView(cookbook);
     setSelectedRecipeForView(null);
     setRecipeDetailMode('view');
@@ -1655,6 +2959,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
   };
 
   const closeRecipeDetailView = () => {
+    recipeDetailRequestIdRef.current += 1;
     closePlanAssignModal();
     setSelectedRecipeForView(null);
     setRecipeDetailMode('view');
@@ -1669,11 +2974,29 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
     setIsAddingRecipeIngredientsToList(false);
   };
 
-  const handleOpenRecipeDetail = (recipe) => {
+  const handleOpenRecipeDetail = async (recipe) => {
+    if (!recipe) {
+      return;
+    }
+
+    recipeDetailRequestIdRef.current += 1;
+    const requestId = recipeDetailRequestIdRef.current;
     setSelectedRecipeForView(recipe);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
     setRecipeDetailDraft(buildRecipeDetailDraft(recipe));
+
+    const detailedRecipe = await ensureRecipeDetailsLoaded(recipe);
+    if (!detailedRecipe) {
+      return;
+    }
+
+    if (requestId !== recipeDetailRequestIdRef.current) {
+      return;
+    }
+
+    setSelectedRecipeForView(detailedRecipe);
+    setRecipeDetailDraft(buildRecipeDetailDraft(detailedRecipe));
   };
 
   const updateRecipeDraftIngredient = (targetIndex, value) => {
@@ -1774,6 +3097,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
         main_photo_url: recipeDetailDraft.mainPhotoUrl || null,
         steps: cleanSteps,
         instructions: cleanSteps.join('\n'),
+        is_public: recipeDetailDraft.isPublic,
       })
       .eq('id', selectedRecipeForView.id)
       .eq('owner_user_id', userId);
@@ -1784,6 +3108,16 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
       return;
     }
 
+    const syncedRecipe = {
+      ...selectedRecipeForView,
+      name,
+      description: descriptionToSave,
+      main_photo_url: recipeDetailDraft.mainPhotoUrl || null,
+      steps: cleanSteps,
+      instructions: cleanSteps.join('\n'),
+      is_public: recipeDetailDraft.isPublic,
+    };
+
     const updatedCookbook = await refreshCookbooksAndSelectedCookbook(selectedCookbookForView?.id);
     if (updatedCookbook) {
       const refreshedRecipe = (updatedCookbook.recipes || []).find(
@@ -1791,9 +3125,18 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
       );
 
       if (refreshedRecipe) {
-        setSelectedRecipeForView(refreshedRecipe);
-        setRecipeDetailDraft(buildRecipeDetailDraft(refreshedRecipe));
+        const mergedRecipe = {
+          ...refreshedRecipe,
+          ...syncedRecipe,
+        };
+        recipeDetailsCacheRef.current[String(mergedRecipe.id)] = mergedRecipe;
+        setSelectedRecipeForView(mergedRecipe);
+        setRecipeDetailDraft(buildRecipeDetailDraft(mergedRecipe));
       }
+    } else {
+      recipeDetailsCacheRef.current[String(syncedRecipe.id)] = syncedRecipe;
+      setSelectedRecipeForView(syncedRecipe);
+      setRecipeDetailDraft(buildRecipeDetailDraft(syncedRecipe));
     }
 
     setRecipeDetailMode('view');
@@ -2129,6 +3472,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
           description: '',
           steps: [],
           instructions: '',
+          is_public: false,
         });
       }
       return;
@@ -2137,7 +3481,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
     setPlanFeedback('');
     const { data, error } = await supabase
       .from('recipes')
-      .select('id, owner_user_id, name, description, main_photo_url, steps, instructions')
+      .select('id, owner_user_id, name, description, main_photo_url, steps, instructions, is_public, source_url')
       .eq('id', recipeId)
       .single();
 
@@ -2259,7 +3603,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
       }
     }
 
-    const refreshedCookbooks = await loadCookbooks();
+    const refreshedCookbooks = await loadCookbooks({ force: true });
     const refreshedCookbook = Array.isArray(refreshedCookbooks)
       ? refreshedCookbooks.find(
           (cookbook) => String(cookbook.id) === String(selectedCookbookForView?.id)
@@ -2275,8 +3619,13 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
       ? findRecipeAcrossCookbooks(refreshedCookbooks, selectedRecipeForView.id)
       : null;
     if (refreshedRecipe) {
-      setSelectedRecipeForView(refreshedRecipe);
-      setRecipeDetailDraft(buildRecipeDetailDraft(refreshedRecipe));
+      const mergedRecipe = {
+        ...refreshedRecipe,
+        ...selectedRecipeForView,
+      };
+      recipeDetailsCacheRef.current[String(mergedRecipe.id)] = mergedRecipe;
+      setSelectedRecipeForView(mergedRecipe);
+      setRecipeDetailDraft(buildRecipeDetailDraft(mergedRecipe));
     }
 
     setIsSavingRecipeCookbookSelection(false);
@@ -2533,6 +3882,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
           main_photo_url: manualMainPhotoUrl || null,
           steps: cleanSteps,
           instructions: cleanSteps.join('\n'),
+          is_public: manualIsPublic,
         })
         .eq('id', manualRecipeEditingId)
         .eq('owner_user_id', userId);
@@ -2590,7 +3940,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
           additional_photos: [],
           steps: cleanSteps,
           instructions: cleanSteps.join('\n'),
-          is_public: false,
+          is_public: manualIsPublic,
         })
         .select('id')
         .single();
@@ -2618,7 +3968,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
       }
     }
 
-    const refreshedCookbooks = await loadCookbooks();
+    const refreshedCookbooks = await loadCookbooks({ force: true });
     if (Array.isArray(refreshedCookbooks)) {
       if (selectedCookbookForView?.id) {
         const refreshedCookbook = refreshedCookbooks.find(
@@ -2637,8 +3987,18 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
       if (savedRecipeId) {
         const refreshedRecipe = findRecipeAcrossCookbooks(refreshedCookbooks, savedRecipeId);
         if (refreshedRecipe) {
-          setSelectedRecipeForView(refreshedRecipe);
-          setRecipeDetailDraft(buildRecipeDetailDraft(refreshedRecipe));
+          const syncedRecipe = {
+            ...refreshedRecipe,
+            name,
+            description: recipeDescription || '',
+            main_photo_url: manualMainPhotoUrl || refreshedRecipe.main_photo_url || null,
+            steps: cleanSteps,
+            instructions: cleanSteps.join('\n'),
+            is_public: manualIsPublic,
+          };
+          recipeDetailsCacheRef.current[String(syncedRecipe.id)] = syncedRecipe;
+          setSelectedRecipeForView(syncedRecipe);
+          setRecipeDetailDraft(buildRecipeDetailDraft(syncedRecipe));
         }
       }
     }
@@ -2660,7 +4020,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
 
     const { data: fetchedRecipe, error: recipeError } = await supabase
       .from('recipes')
-      .select('id, owner_user_id, name, description, main_photo_url, steps, instructions')
+      .select('id, owner_user_id, name, description, main_photo_url, steps, instructions, is_public, source_url')
       .eq('id', recipeId)
       .eq('owner_user_id', userId)
       .single();
@@ -2675,6 +4035,8 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
         main_photo_url: importedRecipeFallback.main_photo_url || '',
         steps: importedRecipeFallback.steps || [],
         instructions: importedRecipeFallback.instructions || '',
+        source_url: importedRecipeFallback.source_url || '',
+        is_public: Boolean(importedRecipeFallback.is_public),
       };
     }
 
@@ -2683,31 +4045,30 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
       return;
     }
 
-    const { descriptionText, ingredients } = splitRecipeDescription(recipeData.description || '');
-    const cleanSteps = normalizeRecipeSteps(recipeData.steps, recipeData.instructions);
-    const refreshedCookbooks = await loadCookbooks();
-    const sourceOwnCookbooks = Array.isArray(refreshedCookbooks)
-      ? refreshedCookbooks.filter((cookbook) => cookbook.owner_user_id === userId)
-      : ownCookbooks;
+    const refreshedCookbooks = await loadCookbooks({ force: true });
+    const sourceCookbooks = Array.isArray(refreshedCookbooks) ? refreshedCookbooks : ownCookbooks;
+    const recipeFromCookbooks = findRecipeAcrossCookbooks(sourceCookbooks, recipeData.id);
+    const syncedRecipe = recipeFromCookbooks
+      ? {
+          ...recipeData,
+          ...recipeFromCookbooks,
+        }
+      : recipeData;
+    const parentCookbook = sourceCookbooks.find((cookbook) =>
+      (cookbook.recipes || []).some((recipe) => String(recipe.id) === String(syncedRecipe.id))
+    );
 
-    const cookbookIds = sourceOwnCookbooks
-      .filter((cookbook) =>
-        (cookbook.recipes || []).some((recipe) => String(recipe.id) === String(recipeData.id))
-      )
-      .map((cookbook) => cookbook.id);
+    recipeDetailsCacheRef.current[String(syncedRecipe.id)] = syncedRecipe;
 
-    setManualRecipeEditingId(recipeData.id);
-    setManualRecipeTitle(recipeData.name || '');
-    setManualMainPhotoUrl(recipeData.main_photo_url || '');
-    setManualRecipeDescription(descriptionText);
-    setManualIngredients(ingredients.length > 0 ? ingredients : ['']);
-    setManualSteps(cleanSteps.length > 0 ? cleanSteps : ['']);
-    setSelectedCookbookIds(cookbookIds);
-    setManualRecipeFeedback('Receta importada. Ajusta lo necesario y guarda cambios.');
     setIsImportUrlModalOpen(false);
     setImportUrl('');
     setImportFeedback('');
-    setIsManualRecipeModalOpen(true);
+    setIsManualRecipeModalOpen(false);
+    setSelectedCookbookForView(parentCookbook || null);
+    setSelectedRecipeForView(syncedRecipe);
+    setRecipeDetailDraft(buildRecipeDetailDraft(syncedRecipe));
+    setRecipeDetailMode('edit');
+    setRecipeDetailFeedback('Receta importada. Ajusta lo necesario y guarda cambios.');
   };
 
   const handleImportRecipeFromUrl = async () => {
@@ -2735,13 +4096,11 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
       return;
     }
 
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError || !sessionData?.session?.access_token) {
+    const edgeAuthHeaders = await getEdgeFunctionAuthHeaders();
+    if (!edgeAuthHeaders) {
       setImportFeedback('Tu sesión no es válida. Cierra sesión y vuelve a entrar.');
       return;
     }
-
-    const accessToken = sessionData.session.access_token;
 
     setIsImportingRecipe(true);
     setImportFeedback('Importando receta...');
@@ -2753,9 +4112,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
         body: {
           url: parsedUrl.toString(),
         },
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+        headers: edgeAuthHeaders,
       });
       data = response.data;
       error = response.error;
@@ -2814,11 +4171,32 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
       return;
     }
 
-    await openRecipeInManualEditForm(importedRecipeId, data?.recipe || null);
+    const normalizedImportUrl = parsedUrl.toString();
+    await supabase
+      .from('recipes')
+      .update({
+        source_url: normalizedImportUrl,
+      })
+      .eq('id', importedRecipeId)
+      .eq('owner_user_id', userId);
+
+    const importedRecipeFallback =
+      data?.recipe && typeof data.recipe === 'object'
+        ? {
+            ...data.recipe,
+            source_url: normalizedImportUrl,
+          }
+        : null;
+
+    await openRecipeInManualEditForm(importedRecipeId, importedRecipeFallback);
   };
 
   return (
     <View style={styles.screen}>
+      <View style={styles.mainLogoWrap}>
+        <Image source={require('../public/logo.png')} style={styles.mainLogo} resizeMode="contain" />
+      </View>
+
       <Animated.View
         style={{
           flex: 1,
@@ -2844,6 +4222,9 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
                     Aquí irá la configuración de cuenta, preferencias y datos personales.
                   </Text>
                   <View style={styles.profileCard}>
+                    {profileDisplayName ? (
+                      <Text style={styles.sessionText}>Nombre: {profileDisplayName}</Text>
+                    ) : null}
                     {userEmail ? <Text style={styles.sessionText}>Sesion activa: {userEmail}</Text> : null}
                     <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
                       <Text style={styles.logoutText}>Cerrar sesion</Text>
@@ -2864,7 +4245,12 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
             <TouchableOpacity
               key={tab.key}
               style={[styles.tabButton, isActive && styles.tabButtonActive]}
-              onPress={() => setActiveTab(tab.key)}
+              onPress={() => {
+                if (selectedRecipeForView) {
+                  closeRecipeDetailView();
+                }
+                setActiveTab(tab.key);
+              }}
             >
               <Ionicons
                 name={tab.icon}
@@ -2906,13 +4292,13 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
                 <Text style={styles.sheetOptionText}>Navegador</Text>
               </View>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.sheetOption} onPress={closeCreateRecipeSheet}>
+            <TouchableOpacity style={styles.sheetOption} onPress={handleOpenCameraImport}>
               <View style={styles.sheetOptionContent}>
                 <Ionicons name="camera-outline" size={20} color={palette.accent} />
                 <Text style={styles.sheetOptionText}>Camara</Text>
               </View>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.sheetOption} onPress={closeCreateRecipeSheet}>
+            <TouchableOpacity style={styles.sheetOption} onPress={handleOpenPasteTextImport}>
               <View style={styles.sheetOptionContent}>
                 <Ionicons name="clipboard-outline" size={20} color={palette.accent} />
                 <Text style={styles.sheetOptionText}>Pegar texto</Text>
@@ -2925,6 +4311,185 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
               </View>
             </TouchableOpacity>
           </Animated.View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={isCreateCookbookSheetOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={closeCreateCookbookSheet}
+      >
+        <View style={styles.sheetOverlay}>
+          <Pressable style={styles.sheetBackdrop} onPress={closeCreateCookbookSheet} />
+          <View style={styles.cookbookCreateSheet}>
+            <Text style={styles.sheetTitle}>Nuevo Recetario</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Nombre del recetario"
+              placeholderTextColor={palette.mutedText}
+              value={newCookbookName}
+              onChangeText={setNewCookbookName}
+              editable={!isMutatingCookbooks}
+              autoFocus
+              onSubmitEditing={() => handleAddCookbook(newCookbookName)}
+              returnKeyType="done"
+            />
+
+            {cookbookFeedback ? <Text style={styles.feedback}>{cookbookFeedback}</Text> : null}
+
+            <TouchableOpacity
+              style={[
+                styles.cookbookCreateSaveButton,
+                (isMutatingCookbooks || !newCookbookName.trim()) && styles.buttonDisabled,
+              ]}
+              onPress={() => handleAddCookbook(newCookbookName)}
+              disabled={isMutatingCookbooks || !newCookbookName.trim()}
+            >
+              <Text style={styles.cookbookCreateSaveButtonText}>
+                {isMutatingCookbooks ? 'Guardando...' : 'Guardar'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={isCameraImportPickerOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setIsCameraImportPickerOpen(false)}
+      >
+        <View style={styles.cameraImportOverlay}>
+          <Pressable
+            style={styles.cameraImportBackdrop}
+            onPress={() => setIsCameraImportPickerOpen(false)}
+          />
+          <View style={styles.cameraImportPopup}>
+            <Text style={styles.cameraImportTitle}>Importar receta con imagen</Text>
+            <Text style={styles.cameraImportSubtitle}>Elige cómo quieres agregar la receta.</Text>
+
+            <TouchableOpacity
+              style={styles.cameraImportOption}
+              onPress={() => {
+                setIsCameraImportPickerOpen(false);
+                void handleImportRecipeFromImage('upload');
+              }}
+            >
+              <Ionicons name="images-outline" size={20} color={palette.accent} />
+              <Text style={styles.cameraImportOptionText}>Seleccionar Imagen</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.cameraImportOption}
+              onPress={() => {
+                setIsCameraImportPickerOpen(false);
+                void handleImportRecipeFromImage('camera');
+              }}
+            >
+              <Ionicons name="camera-outline" size={20} color={palette.accent} />
+              <Text style={styles.cameraImportOptionText}>Tomar Fotografía</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.cameraImportCancel}
+              onPress={() => setIsCameraImportPickerOpen(false)}
+            >
+              <Text style={styles.cameraImportCancelText}>Cancelar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={isPasteTextModalOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setIsPasteTextModalOpen(false)}
+      >
+        <View style={styles.importOverlay}>
+          <Pressable style={styles.importBackdrop} onPress={() => setIsPasteTextModalOpen(false)} />
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.importPopupWrap}
+          >
+            <View style={styles.importPopup}>
+              <Text style={styles.importTitle}>Importar desde texto</Text>
+              <Text style={styles.importSubtitle}>
+                Pega una receta completa y el sistema extraerá título, descripción, ingredientes y pasos.
+              </Text>
+
+              <View style={styles.pasteHeaderRow}>
+                <TouchableOpacity
+                  style={[styles.importButtonSecondary, isImportingRecipe && styles.buttonDisabled]}
+                  onPress={handlePasteFromClipboard}
+                  disabled={isImportingRecipe}
+                >
+                  <Text style={styles.importButtonSecondaryText}>Pegar</Text>
+                </TouchableOpacity>
+              </View>
+
+              <TextInput
+                style={[styles.importInput, styles.pasteTextInput]}
+                value={pasteRecipeText}
+                onChangeText={setPasteRecipeText}
+                placeholder="Pega aquí el texto de la receta..."
+                placeholderTextColor={palette.mutedText}
+                editable={!isImportingRecipe}
+                multiline
+                textAlignVertical="top"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+
+              {pasteRecipeFeedback ? (
+                <Text
+                  style={[
+                    styles.importFeedback,
+                    pasteRecipeFeedback.toLowerCase().includes('importada') && styles.importFeedbackSuccess,
+                    pasteRecipeFeedback.toLowerCase().includes('leyendo') && styles.importFeedbackInfo,
+                  ]}
+                >
+                  {pasteRecipeFeedback}
+                </Text>
+              ) : null}
+
+              <View style={styles.importActions}>
+                <TouchableOpacity
+                  style={[styles.importButtonSecondary, isImportingRecipe && styles.buttonDisabled]}
+                  onPress={() => setIsPasteTextModalOpen(false)}
+                  disabled={isImportingRecipe}
+                >
+                  <Text style={styles.importButtonSecondaryText}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.importButtonPrimary,
+                    (isImportingRecipe || !pasteRecipeText.trim()) && styles.buttonDisabled,
+                  ]}
+                  onPress={handleImportRecipeFromPastedText}
+                  disabled={isImportingRecipe || !pasteRecipeText.trim()}
+                >
+                  <Text style={styles.importButtonPrimaryText}>
+                    {isImportingRecipe ? 'Importando...' : 'Importar'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={Boolean(imageImportProgressText)}
+        animationType="fade"
+        transparent
+      >
+        <View style={styles.cameraImportOverlay}>
+          <View style={styles.imageImportLoadingCard}>
+            <ActivityIndicator size="small" color={palette.accent} />
+            <Text style={styles.imageImportLoadingText}>{imageImportProgressText}</Text>
+          </View>
         </View>
       </Modal>
 
@@ -3021,7 +4586,11 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
             </View>
             <TouchableOpacity style={styles.manualHeroCenter} onPress={handlePickManualPhoto} activeOpacity={0.9}>
               {manualMainPhotoUrl ? (
-                <Image source={{ uri: manualMainPhotoUrl }} style={styles.manualHeroPhoto} resizeMode="cover" />
+                <Image
+                  source={{ uri: manualMainPhotoUrl }}
+                  style={styles.manualHeroPhoto}
+                  resizeMode="cover"
+                />
               ) : (
                 <View style={styles.manualHeroPhotoPlaceholder}>
                   <Ionicons name="add" size={48} color={palette.accent} />
@@ -3080,6 +4649,26 @@ export default function PrincipalScreen({ onLogout, userEmail, userId }) {
                 <Text style={styles.manualQuickActionText}>Compartir</Text>
               </TouchableOpacity>
             </View>
+
+            <TouchableOpacity
+              style={styles.manualVisibilityToggle}
+              onPress={() => setManualIsPublic((previousValue) => !previousValue)}
+              disabled={isSavingManualRecipe}
+            >
+              <View style={styles.manualVisibilityToggleLeft}>
+                <Ionicons
+                  name={manualIsPublic ? 'globe-outline' : 'lock-closed-outline'}
+                  size={18}
+                  color={palette.accent}
+                />
+                <Text style={styles.manualVisibilityToggleLabel}>
+                  {manualIsPublic ? 'Receta pública' : 'Receta privada'}
+                </Text>
+              </View>
+              <Text style={styles.manualVisibilityToggleAction}>
+                {manualIsPublic ? 'Cambiar a privada' : 'Cambiar a pública'}
+              </Text>
+            </TouchableOpacity>
 
             <TextInput
               style={styles.manualDescriptionInput}
@@ -3576,6 +5165,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: palette.background,
   },
+  mainLogoWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: spacing.sm,
+  },
+  mainLogo: {
+    width: 224,
+    height: 72,
+  },
   contentArea: {
     flexGrow: 1,
     paddingHorizontal: spacing.lg,
@@ -3629,6 +5227,64 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
     marginBottom: spacing.md,
+  },
+  recipesSearchWrap: {
+    position: 'relative',
+    marginBottom: spacing.md,
+    zIndex: 40,
+  },
+  recipeSearchInputWrap: {
+    position: 'relative',
+  },
+  recipesSearchInput: {
+    borderWidth: 1,
+    borderColor: '#C6D4E8',
+    borderRadius: 12,
+    backgroundColor: '#FAFCFF',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    paddingRight: 46,
+    fontFamily: fonts.regular,
+    color: palette.accent,
+  },
+  recipeSearchFilterButton: {
+    position: 'absolute',
+    right: 10,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  recipeSearchScopeMenu: {
+    position: 'absolute',
+    right: 0,
+    top: 52,
+    borderWidth: 1,
+    borderColor: '#DCE6EC',
+    borderRadius: 12,
+    backgroundColor: '#FAFCFF',
+    overflow: 'hidden',
+    minWidth: 170,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  recipeSearchScopeMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  recipeSearchScopeMenuText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 12,
+  },
+  recipeSearchScopeMenuTextActive: {
+    color: palette.accent,
   },
   input: {
     flex: 1,
@@ -3738,6 +5394,11 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     overflow: 'hidden',
     marginBottom: spacing.sm,
+  },
+  newCookbookPreview: {
+    backgroundColor: '#DAD2C4',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   previewLeft: {
     flex: 2,
@@ -3952,6 +5613,17 @@ const styles = StyleSheet.create({
     paddingTop: spacing.lg,
     paddingBottom: spacing.xl,
   },
+  cookbookCreateSheet: {
+    backgroundColor: palette.card,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
+    borderWidth: 1,
+    borderColor: '#DCE6EC',
+    gap: spacing.md,
+  },
   sheetTitle: {
     color: palette.accent,
     fontFamily: fonts.bold,
@@ -4020,6 +5692,15 @@ const styles = StyleSheet.create({
     color: palette.accent,
     marginBottom: spacing.sm,
   },
+  pasteHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    marginBottom: spacing.sm,
+  },
+  pasteTextInput: {
+    minHeight: 220,
+    maxHeight: 300,
+  },
   importFeedback: {
     color: '#B42318',
     fontFamily: fonts.medium,
@@ -4063,6 +5744,17 @@ const styles = StyleSheet.create({
     color: palette.card,
     fontFamily: fonts.medium,
   },
+  cookbookCreateSaveButton: {
+    backgroundColor: palette.button,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  cookbookCreateSaveButtonText: {
+    color: palette.card,
+    fontFamily: fonts.medium,
+    fontSize: 14,
+  },
   cookbookBackAction: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -4081,6 +5773,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing.sm,
   },
+  recipeDetailEditActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   recipeDetailEditButton: {
     paddingHorizontal: 10,
     paddingVertical: 6,
@@ -4089,10 +5786,17 @@ const styles = StyleSheet.create({
     borderColor: '#C6D4E8',
     backgroundColor: '#FAFCFF',
   },
+  recipeDetailEditButtonPrimary: {
+    borderColor: palette.button,
+    backgroundColor: palette.button,
+  },
   recipeDetailEditButtonText: {
     color: palette.accent,
     fontFamily: fonts.medium,
     fontSize: 12,
+  },
+  recipeDetailEditButtonTextPrimary: {
+    color: palette.card,
   },
   recipeDetailHero: {
     height: 260,
@@ -4126,6 +5830,102 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     marginBottom: spacing.md,
   },
+  recipeDetailInfoBox: {
+    borderWidth: 1,
+    borderColor: '#DCE6EC',
+    borderRadius: 12,
+    backgroundColor: '#EDF5FF',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  recipeDetailInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  recipeDetailInfoText: {
+    flex: 1,
+    color: palette.text,
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 0,
+  },
+  recipeDetailSourceText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    textDecorationLine: 'underline',
+  },
+  recipeDetailSourceRow: {
+    borderRadius: 8,
+  },
+  recipeViewActionsCard: {
+    borderTopWidth: 1,
+    borderTopColor: '#E3DED4',
+    paddingTop: spacing.md,
+    marginBottom: spacing.md,
+  },
+  recipeViewActionsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  recipeCookedToggleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexShrink: 1,
+  },
+  recipeCookedToggleText: {
+    color: palette.accent,
+    fontFamily: fonts.regular,
+    fontSize: 16,
+  },
+  recipeCookedToggleIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#D8D3CB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeCookedToggleIconWrapActive: {
+    backgroundColor: '#98A9C8',
+  },
+  recipeRatingStarsWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  recipeCookedNoteInput: {
+    borderRadius: 18,
+    backgroundColor: '#EAE8E3',
+    color: palette.accent,
+    fontFamily: fonts.regular,
+    fontSize: 16,
+    minHeight: 64,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  recipeVisibilityToggle: {
+    borderWidth: 1,
+    borderColor: '#DCE6EC',
+    borderRadius: 12,
+    backgroundColor: '#FAFCFF',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    marginBottom: spacing.md,
+    alignItems: 'center',
+  },
+  recipeVisibilityToggleText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 13,
+  },
   recipeDetailTitleInput: {
     color: palette.card,
     fontFamily: fonts.bold,
@@ -4155,6 +5955,14 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     fontSize: 14,
     lineHeight: 20,
+  },
+  recipeDetailDescriptionInput: {
+    color: palette.accent,
+    fontFamily: fonts.regular,
+    fontSize: 14,
+    lineHeight: 20,
+    paddingVertical: 0,
+    minHeight: 78,
   },
   recipeDetailBullet: {
     width: 18,
@@ -4290,6 +6098,118 @@ const styles = StyleSheet.create({
   },
   cookbookRecipeName: {
     flex: 1,
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 14,
+  },
+  cookbookRecipeDescription: {
+    marginTop: 2,
+    color: palette.mutedText,
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  recipeSearchResultContent: {
+    flex: 1,
+  },
+  recipeSearchResultTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  recipeSearchAuthorBadge: {
+    marginLeft: 2,
+  },
+  recipeSearchResultMeta: {
+    marginTop: 2,
+    color: palette.mutedText,
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  recipeSearchResultMetaPrefix: {
+    color: palette.mutedText,
+    fontFamily: fonts.regular,
+  },
+  recipeSearchResultMetaName: {
+    color: palette.accent,
+    fontFamily: fonts.semiBold,
+  },
+  recipeSearchResultMetaAuthor: {
+    color: '#1D9BF0',
+    fontFamily: fonts.medium,
+  },
+  cameraImportOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  cameraImportBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+  },
+  cameraImportPopup: {
+    backgroundColor: palette.card,
+    borderRadius: 18,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: '#DCE6EC',
+    gap: spacing.sm,
+  },
+  cameraImportTitle: {
+    color: palette.accent,
+    fontFamily: fonts.semiBold,
+    fontSize: 20,
+  },
+  cameraImportSubtitle: {
+    color: palette.text,
+    fontFamily: fonts.regular,
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 4,
+  },
+  cameraImportOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#DCE6EC',
+    borderRadius: 12,
+    backgroundColor: '#FAFCFF',
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  cameraImportOptionText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 14,
+  },
+  cameraImportCancel: {
+    alignSelf: 'flex-end',
+    marginTop: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  cameraImportCancelText: {
+    color: palette.mutedText,
+    fontFamily: fonts.medium,
+    fontSize: 13,
+  },
+  imageImportLoadingCard: {
+    alignSelf: 'center',
+    minWidth: 220,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: palette.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#DCE6EC',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  imageImportLoadingText: {
     color: palette.accent,
     fontFamily: fonts.medium,
     fontSize: 14,
@@ -4457,10 +6377,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   manualHeroCenter: {
-    flex: 1,
+    height: 220,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+    borderRadius: 16,
   },
   manualHeroPhoto: {
     width: '100%',
@@ -4480,17 +6401,20 @@ const styles = StyleSheet.create({
   },
   manualTitleBar: {
     backgroundColor: '#7892C2',
+    borderRadius: 12,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
+    marginTop: spacing.md,
+    marginBottom: spacing.md,
   },
   manualTitleInput: {
     flex: 1,
     color: palette.card,
     fontFamily: fonts.bold,
-    fontSize: 26,
-    lineHeight: 30,
+    fontSize: 24,
+    lineHeight: 28,
   },
   manualBody: {
     flex: 1,
@@ -4505,6 +6429,35 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: spacing.md,
+  },
+  manualVisibilityToggle: {
+    borderWidth: 1,
+    borderColor: '#DCE6EC',
+    borderRadius: 12,
+    backgroundColor: '#FAFCFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  manualVisibilityToggleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  manualVisibilityToggleLabel: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 13,
+  },
+  manualVisibilityToggleAction: {
+    color: palette.mutedText,
+    fontFamily: fonts.regular,
+    fontSize: 12,
   },
   manualQuickAction: {
     width: '23%',

@@ -1,0 +1,77 @@
+{
+  "recipes": [
+    {
+      "id": 1,
+      "name": "Pasta Cremosa de Ajo y Espinaca",
+      "description": "Una pasta suave y cremosa con notas de ajo tostado y espinaca fresca. Ideal para una cena rápida entre semana.",
+      "image_url": "https://unsplash.com/photos/cooked-pasta-and-baked-bread-wAwEmrUUV0w",
+      "ingredients": [
+        "250 g de pasta corta",
+        "2 dientes de ajo picados",
+        "1 taza de espinaca fresca",
+        "1 taza de crema de leche",
+        "1/2 taza de queso parmesano rallado"
+      ],
+      "steps": [
+        "Hervir agua con sal en una olla grande.",
+        "Cocinar la pasta según las instrucciones del paquete.",
+        "Reservar 1/2 taza del agua de cocción y escurrir la pasta.",
+        "En una sartén, saltear el ajo a fuego medio hasta que esté fragante.",
+        "Agregar la espinaca y cocinar hasta que reduzca su volumen.",
+        "Incorporar la crema de leche y mezclar.",
+        "Añadir el queso parmesano y remover hasta integrar.",
+        "Agregar la pasta cocida y un poco del agua reservada para ajustar la textura.",
+        "Servir caliente con queso adicional si se desea."
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Bowl Tibio de Pollo y Vegetales",
+      "description": "Un bowl equilibrado con proteína magra y vegetales asados. Aporta textura y contraste de sabores.",
+      "image_url": "https://unsplash.com/photos/corn-and-sliced-tomato-on-white-ceramic-bowl-zhkhwGrqilw",
+      "ingredients": [
+        "1 pechuga de pollo en cubos",
+        "1 taza de arroz cocido",
+        "1/2 taza de zanahoria en rodajas",
+        "1/2 taza de brócoli",
+        "1 cucharada de aceite de oliva",
+        "Sal y pimienta al gusto"
+      ],
+      "steps": [
+        "Precalentar el horno a 200°C.",
+        "Mezclar zanahoria y brócoli con aceite, sal y pimienta.",
+        "Hornear los vegetales durante 15 minutos.",
+        "Sazonar el pollo con sal y pimienta.",
+        "Cocinar el pollo en una sartén hasta dorar y cocinar completamente.",
+        "Calentar el arroz si es necesario.",
+        "Armar el bowl colocando arroz en la base.",
+        "Añadir el pollo y los vegetales encima y servir."
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Ensalada Fresca de Garbanzos y Limón",
+      "description": "Una ensalada ligera con acidez equilibrada y textura crujiente. Puede servirse como acompañamiento o plato principal ligero.",
+      "image_url": "https://unsplash.com/photos/bowl-of-vegetable-salads-IGfIGP5ONV0",
+      "ingredients": [
+        "1 taza de garbanzos cocidos",
+        "1/2 pepino en cubos",
+        "1/2 taza de tomate en cubos",
+        "Jugo de 1 limón",
+        "1 cucharada de aceite de oliva",
+        "Sal al gusto"
+      ],
+      "steps": [
+        "Enjuagar y escurrir los garbanzos.",
+        "Cortar el pepino y el tomate en cubos pequeños.",
+        "Colocar todos los ingredientes sólidos en un bowl.",
+        "Mezclar el jugo de limón con el aceite de oliva.",
+        "Añadir sal al aderezo y mezclar.",
+        "Verter el aderezo sobre la mezcla.",
+        "Integrar suavemente con una cuchara.",
+        "Refrigerar por 15 minutos para intensificar sabores.",
+        "Servir frío o a temperatura ambiente."
+      ]
+    }
+  ]
+}
