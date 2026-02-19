@@ -8,7 +8,6 @@ import {
   KeyboardAvoidingView,
   Linking,
   Modal,
-  PanResponder,
   Platform,
   Pressable,
   Share,
@@ -84,8 +83,6 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
   const [recipeDetailFeedback, setRecipeDetailFeedback] = useState('');
   const [isSavingRecipeDetail, setIsSavingRecipeDetail] = useState(false);
   const [isDeletingRecipe, setIsDeletingRecipe] = useState(false);
-  const [isRecipeStepReorderMode, setIsRecipeStepReorderMode] = useState(false);
-  const [draggingRecipeStepIndex, setDraggingRecipeStepIndex] = useState(null);
   const [isRecipeMoreDropdownOpen, setIsRecipeMoreDropdownOpen] = useState(false);
   const [isRecipeMoreMenuOpen, setIsRecipeMoreMenuOpen] = useState(false);
   const [isRecipeDeleteConfirmOpen, setIsRecipeDeleteConfirmOpen] = useState(false);
@@ -151,7 +148,6 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
   const [recipeNoteById, setRecipeNoteById] = useState({});
   const ingredientInputRefs = useRef([]);
   const stepInputRefs = useRef([]);
-  const stepDragStateRef = useRef({ currentIndex: -1, lastSwapTs: 0 });
   const tabContentOpacity = useRef(new Animated.Value(1)).current;
   const tabContentTranslateY = useRef(new Animated.Value(0)).current;
   const sheetBackdropOpacity = useRef(new Animated.Value(0)).current;
@@ -2270,79 +2266,10 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
 
           <View style={styles.recipeDetailStepsHeaderRow}>
             <Text style={styles.manualSectionTitle}>Instrucciones</Text>
-            {isEditingRecipeDetail ? (
-              <TouchableOpacity
-                style={styles.recipeDetailReorderButton}
-                onPress={() => {
-                  setIsRecipeStepReorderMode((prevValue) => !prevValue);
-                  setDraggingRecipeStepIndex(null);
-                }}
-                disabled={isSavingRecipeDetail}
-              >
-                <Text style={styles.recipeDetailReorderText}>
-                  {isRecipeStepReorderMode ? 'Listo' : 'Reordenar'}
-                </Text>
-              </TouchableOpacity>
-            ) : null}
           </View>
 
           {recipeDetailDraft.steps.map((item, index) => {
             const stepPhotoUrl = String(recipeDetailDraft.stepPhotos?.[index] || '').trim();
-            const stepDragResponder =
-              isEditingRecipeDetail && isRecipeStepReorderMode
-                ? PanResponder.create({
-                    onStartShouldSetPanResponder: () => !isSavingRecipeDetail,
-                    onMoveShouldSetPanResponder: (_evt, gestureState) =>
-                      !isSavingRecipeDetail && Math.abs(gestureState.dy) > 4,
-                    onPanResponderGrant: () => {
-                      setDraggingRecipeStepIndex(index);
-                      stepDragStateRef.current = { currentIndex: index, lastSwapTs: 0 };
-                    },
-                    onPanResponderMove: (_evt, gestureState) => {
-                      if (isSavingRecipeDetail) {
-                        return;
-                      }
-
-                      const now = Date.now();
-                      const currentDrag = stepDragStateRef.current;
-                      if (now - currentDrag.lastSwapTs < 120) {
-                        return;
-                      }
-
-                      const currentIndex = currentDrag.currentIndex;
-                      if (
-                        gestureState.dy <= -26 &&
-                        currentIndex > 0
-                      ) {
-                        moveRecipeDraftStep(currentIndex, currentIndex - 1);
-                        stepDragStateRef.current = {
-                          currentIndex: currentIndex - 1,
-                          lastSwapTs: now,
-                        };
-                        return;
-                      }
-
-                      if (
-                        gestureState.dy >= 26 &&
-                        currentIndex < recipeDetailDraft.steps.length - 1
-                      ) {
-                        moveRecipeDraftStep(currentIndex, currentIndex + 1);
-                        stepDragStateRef.current = {
-                          currentIndex: currentIndex + 1,
-                          lastSwapTs: now,
-                        };
-                      }
-                    },
-                    onPanResponderRelease: () => {
-                      setDraggingRecipeStepIndex(null);
-                      stepDragStateRef.current = { currentIndex: -1, lastSwapTs: 0 };
-                    },
-                    onPanResponderTerminate: () => {
-                      setDraggingRecipeStepIndex(null);
-                      stepDragStateRef.current = { currentIndex: -1, lastSwapTs: 0 };
-                    },
-                  })
-                : null;
             return (
               <View key={`detail-step-${index}`} style={styles.recipeDetailStepCard}>
                 <TouchableOpacity
@@ -2387,20 +2314,28 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
 
                   {isEditingRecipeDetail ? (
                     <View style={styles.recipeDetailStepCardFooter}>
-                      {isRecipeStepReorderMode ? (
-                        <View style={styles.recipeDetailStepDragArea}>
-                          <View
-                            style={[
-                              styles.recipeDetailStepDragHandle,
-                              draggingRecipeStepIndex === index && styles.recipeDetailStepDragHandleActive,
-                              isSavingRecipeDetail && styles.buttonDisabled,
-                            ]}
-                            {...(stepDragResponder ? stepDragResponder.panHandlers : {})}
-                          >
-                            <Ionicons name="reorder-three-outline" size={18} color={palette.accent} />
-                          </View>
-                        </View>
-                      ) : null}
+                      <View style={styles.recipeDetailStepMoveButtons}>
+                        <TouchableOpacity
+                          style={[
+                            styles.recipeDetailStepMoveButton,
+                            (index === 0 || isSavingRecipeDetail) && styles.buttonDisabled,
+                          ]}
+                          onPress={() => moveRecipeDraftStep(index, index - 1)}
+                          disabled={index === 0 || isSavingRecipeDetail}
+                        >
+                          <Ionicons name="chevron-up-outline" size={16} color={palette.accent} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.recipeDetailStepMoveButton,
+                            (index === recipeDetailDraft.steps.length - 1 || isSavingRecipeDetail) && styles.buttonDisabled,
+                          ]}
+                          onPress={() => moveRecipeDraftStep(index, index + 1)}
+                          disabled={index === recipeDetailDraft.steps.length - 1 || isSavingRecipeDetail}
+                        >
+                          <Ionicons name="chevron-down-outline" size={16} color={palette.accent} />
+                        </TouchableOpacity>
+                      </View>
 
                       <TouchableOpacity
                         style={[
@@ -3371,8 +3306,6 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     }
 
     setRecipeDetailDraft(buildRecipeDetailDraft(selectedRecipeForView));
-    setIsRecipeStepReorderMode(false);
-    setDraggingRecipeStepIndex(null);
     setRecipeDetailMode('edit');
     setRecipeDetailFeedback('');
   };
@@ -3383,8 +3316,6 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     }
 
     setRecipeDetailDraft(buildRecipeDetailDraft(selectedRecipeForView));
-    setIsRecipeStepReorderMode(false);
-    setDraggingRecipeStepIndex(null);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
     setIsSavingRecipeDetail(false);
@@ -3413,8 +3344,6 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     closePlanAssignModal();
     setSelectedCookbookForView(null);
     setSelectedRecipeForView(null);
-    setIsRecipeStepReorderMode(false);
-    setDraggingRecipeStepIndex(null);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
     setIsSavingRecipeDetail(false);
@@ -3463,8 +3392,6 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     recipeDetailRequestIdRef.current += 1;
     setSelectedCookbookForView(cookbook);
     setSelectedRecipeForView(null);
-    setIsRecipeStepReorderMode(false);
-    setDraggingRecipeStepIndex(null);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
     setSelectedCookbookRecipeIds([]);
@@ -3481,8 +3408,6 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     recipeDetailRequestIdRef.current += 1;
     closePlanAssignModal();
     setSelectedRecipeForView(null);
-    setIsRecipeStepReorderMode(false);
-    setDraggingRecipeStepIndex(null);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
     setIsSavingRecipeDetail(false);
@@ -3507,8 +3432,6 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     recipeDetailRequestIdRef.current += 1;
     const requestId = recipeDetailRequestIdRef.current;
     setSelectedRecipeForView(recipe);
-    setIsRecipeStepReorderMode(false);
-    setDraggingRecipeStepIndex(null);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
     setRecipeDetailDraft(buildRecipeDetailDraft(recipe));
@@ -3762,8 +3685,6 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     }
 
     setRecipeDetailMode('view');
-    setIsRecipeStepReorderMode(false);
-    setDraggingRecipeStepIndex(null);
     setRecipeDetailFeedback('Receta actualizada correctamente.');
   };
 
@@ -4455,8 +4376,6 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
       setSelectedRecipeForView(syncedRecipe);
       setRecipeDetailDraft(buildRecipeDetailDraft(syncedRecipe));
       setRecipeDetailMode('view');
-      setIsRecipeStepReorderMode(false);
-      setDraggingRecipeStepIndex(null);
 
       if (hasOwnCookbooksAvailable) {
         setRecipeCookbookSelectionIds([]);
@@ -7323,16 +7242,6 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  recipeDetailReorderButton: {
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-  },
-  recipeDetailReorderText: {
-    color: palette.accent,
-    fontFamily: fonts.medium,
-    fontSize: 14,
   },
   recipeDetailStepCard: {
     backgroundColor: '#FAFCFF',
@@ -7399,22 +7308,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  recipeDetailStepDragArea: {
+  recipeDetailStepMoveButtons: {
     marginRight: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
-  recipeDetailStepDragHandle: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+  recipeDetailStepMoveButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#D6DBE6',
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  recipeDetailStepDragHandleActive: {
-    borderColor: '#9FB4D6',
-    backgroundColor: '#F0F6FF',
   },
   recipeDetailStepRemoveButton: {
     width: 28,
