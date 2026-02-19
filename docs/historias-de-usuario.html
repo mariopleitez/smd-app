@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SaveMyDish - Historias de Usuario</title>
+  <style>
+    :root {
+      --bg: #f5f2e8;
+      --card: #ffffff;
+      --text: #193a39;
+      --muted: #4f6b6a;
+      --line: #d8dfde;
+      --header: #e8efee;
+      --accent: #0f6b67;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Avenir Next", "Segoe UI", Arial, sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at top right, #eef4f3 0%, var(--bg) 45%);
+      line-height: 1.5;
+    }
+    main {
+      max-width: 1100px;
+      margin: 40px auto;
+      padding: 0 16px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.08);
+      padding: 28px;
+    }
+    h1 {
+      margin: 0 0 16px;
+      font-size: 1.9rem;
+      color: var(--accent);
+    }
+    h2 {
+      margin: 24px 0 12px;
+      font-size: 1.2rem;
+      color: var(--text);
+    }
+    p { margin: 10px 0; }
+    ul { margin: 10px 0 10px 20px; }
+    li { margin: 6px 0; }
+    code {
+      background: #edf2f2;
+      padding: 2px 6px;
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.9em;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      margin: 14px 0 18px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 820px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      border-right: 1px solid var(--line);
+      padding: 10px 12px;
+      vertical-align: top;
+      text-align: left;
+      font-size: 0.95rem;
+    }
+    th:last-child, td:last-child { border-right: none; }
+    tr:last-child td { border-bottom: none; }
+    th {
+      background: var(--header);
+      font-weight: 700;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    .footer {
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    @media (max-width: 640px) {
+      .card { padding: 16px; border-radius: 12px; }
+      h1 { font-size: 1.5rem; }
+      th, td { font-size: 0.9rem; }
+    }
+    @media print {
+      body { background: #fff; }
+      main { margin: 0; max-width: none; padding: 0; }
+      .card {
+        box-shadow: none;
+        border: none;
+        border-radius: 0;
+        padding: 0;
+      }
+      .table-wrap { overflow: visible; }
+      table { min-width: 0; }
+      th { position: static; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card">
+<h1>SaveMyDish - Historias de Usuario</h1>
+<p>Documento vivo de funcionalidades actuales de la app, organizado por pantalla/flujo.</p>
+<h2>Convenciones</h2>
+<ul>
+<li>Formato: <code>Como &lt;tipo de usuario&gt;, quiero &lt;accion&gt;, para &lt;beneficio&gt;.</code></li>
+<li>Todas las historias listadas abajo corresponden a funcionalidades visibles en la app actual.</li>
+</ul>
+<h2>Historias</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>ID</th><th>Pantalla / Flujo</th><th>Historia de usuario</th></tr></thead>
+<tbody>
+<tr><td>HU-001</td><td>Splash</td><td>Como usuario, quiero ver una pantalla de carga inicial con branding, para identificar la app mientras se prepara la navegacion.</td></tr>
+<tr><td>HU-002</td><td>Comenzar</td><td>Como usuario, quiero entrar a la pantalla de inicio, para elegir si iniciar sesion o crear cuenta.</td></tr>
+<tr><td>HU-003</td><td>Comenzar</td><td>Como usuario nuevo, quiero ir a registro desde Comenzar, para crear mi cuenta.</td></tr>
+<tr><td>HU-004</td><td>Comenzar</td><td>Como usuario existente, quiero ir a login desde Comenzar, para entrar con mis credenciales.</td></tr>
+<tr><td>HU-005</td><td>Registro</td><td>Como usuario, quiero registrar nombre, correo y contrasena, para crear una cuenta.</td></tr>
+<tr><td>HU-006</td><td>Registro</td><td>Como usuario, quiero validacion de campos obligatorios en registro, para evitar enviar formularios incompletos.</td></tr>
+<tr><td>HU-007</td><td>Registro</td><td>Como usuario, quiero validacion de longitud minima de contrasena, para cumplir requisitos de seguridad.</td></tr>
+<tr><td>HU-008</td><td>Registro</td><td>Como usuario, quiero ver mensajes de error o exito al registrarme, para saber el resultado de la operacion.</td></tr>
+<tr><td>HU-009</td><td>Registro</td><td>Como usuario, quiero volver a login desde registro, para usar una cuenta que ya existe.</td></tr>
+<tr><td>HU-010</td><td>Login</td><td>Como usuario, quiero iniciar sesion con correo y contrasena, para acceder a mi informacion.</td></tr>
+<tr><td>HU-011</td><td>Login</td><td>Como usuario, quiero validacion de campos obligatorios en login, para evitar intentos invalidos.</td></tr>
+<tr><td>HU-012</td><td>Login</td><td>Como usuario, quiero ver mensajes claros si falla el inicio de sesion, para saber como corregirlo.</td></tr>
+<tr><td>HU-013</td><td>Login</td><td>Como usuario, quiero ir a registro desde login, para crear cuenta si aun no tengo una.</td></tr>
+<tr><td>HU-014</td><td>Login</td><td>Como usuario, quiero volver a Comenzar desde login, para cambiar de flujo.</td></tr>
+<tr><td>HU-015</td><td>Global / Sesion</td><td>Como usuario autenticado, quiero que la app me lleve automaticamente a Principal, para continuar rapido.</td></tr>
+<tr><td>HU-016</td><td>Global / Sesion</td><td>Como usuario sin sesion, quiero ser redirigido a Comenzar, para iniciar sesion o registrarme.</td></tr>
+<tr><td>HU-017</td><td>Onboarding inicial</td><td>Como usuario nuevo o sin recetas, quiero ver una oferta de 3 recetas de bienvenida, para empezar rapido.</td></tr>
+<tr><td>HU-018</td><td>Onboarding inicial</td><td>Como usuario, quiero aceptar la oferta de recetas de bienvenida, para cargarlas en mi perfil.</td></tr>
+<tr><td>HU-019</td><td>Onboarding inicial</td><td>Como usuario, quiero poder rechazar la oferta de recetas de bienvenida, para continuar sin cargar recetas.</td></tr>
+<tr><td>HU-020</td><td>Navegacion principal</td><td>Como usuario, quiero navegar por tabs (Recetas, Plan, Lista, Perfil), para gestionar todas las funciones de la app.</td></tr>
+<tr><td>HU-021</td><td>Navegacion principal</td><td>Como usuario, quiero un boton flotante de crear/importar, para agregar recetas desde cualquier momento.</td></tr>
+<tr><td>HU-022</td><td>Recetas (tab)</td><td>Como usuario, quiero ver todos mis recetarios, para organizar mis recetas por categorias.</td></tr>
+<tr><td>HU-023</td><td>Recetas (tab)</td><td>Como usuario, quiero crear un nuevo recetario, para agrupar recetas segun mi criterio.</td></tr>
+<tr><td>HU-024</td><td>Recetas (tab)</td><td>Como usuario, quiero abrir un recetario y ver sus recetas, para trabajar sobre su contenido.</td></tr>
+<tr><td>HU-025</td><td>Recetas (tab)</td><td>Como usuario, quiero tener un espacio &quot;Sin Recetario&quot;, para recetas que aun no he organizado.</td></tr>
+<tr><td>HU-026</td><td>Recetas (tab)</td><td>Como usuario, quiero buscar recetas por texto, para encontrar rapido una receta puntual.</td></tr>
+<tr><td>HU-027</td><td>Recetas (tab)</td><td>Como usuario, quiero filtrar busqueda por alcance (mis recetas / publico), para controlar el origen de resultados.</td></tr>
+<tr><td>HU-028</td><td>Recetas (tab)</td><td>Como usuario, quiero abrir una receta desde resultados de busqueda, para consultarla o editarla.</td></tr>
+<tr><td>HU-029</td><td>Recetas (tab)</td><td>Como usuario, quiero ver metadata del autor en recetas externas, para identificar de quien es la receta.</td></tr>
+<tr><td>HU-030</td><td>Organizar recetario</td><td>Como usuario dueno del recetario, quiero renombrarlo, para mantener nombres claros.</td></tr>
+<tr><td>HU-031</td><td>Organizar recetario</td><td>Como usuario dueno del recetario, quiero seleccionar varias recetas, para ejecutar acciones en lote.</td></tr>
+<tr><td>HU-032</td><td>Organizar recetario</td><td>Como usuario dueno del recetario, quiero mover recetas seleccionadas a otro recetario, para reorganizar contenido.</td></tr>
+<tr><td>HU-033</td><td>Organizar recetario</td><td>Como usuario dueno del recetario, quiero remover recetas del recetario sin borrarlas, para enviarlas a &quot;Sin Recetario&quot;.</td></tr>
+<tr><td>HU-034</td><td>Organizar recetario</td><td>Como usuario dueno del recetario, quiero eliminar recetas seleccionadas, para limpiar contenido no deseado.</td></tr>
+<tr><td>HU-035</td><td>Organizar recetario</td><td>Como usuario dueno del recetario, quiero eliminar el recetario sin perder sus recetas, para simplificar estructura.</td></tr>
+<tr><td>HU-036</td><td>Crear receta (sheet)</td><td>Como usuario, quiero abrir opciones de creacion/importacion, para elegir mi metodo preferido.</td></tr>
+<tr><td>HU-037</td><td>Crear receta manual</td><td>Como usuario, quiero crear una receta manualmente, para registrar recetas propias.</td></tr>
+<tr><td>HU-038</td><td>Crear receta manual</td><td>Como usuario, quiero agregar foto principal a la receta manual, para identificarla visualmente.</td></tr>
+<tr><td>HU-039</td><td>Crear receta manual</td><td>Como usuario, quiero escribir descripcion, ingredientes y pasos, para guardar la receta completa.</td></tr>
+<tr><td>HU-040</td><td>Crear receta manual</td><td>Como usuario, quiero asignar la receta a uno o varios recetarios al guardarla, para mantener organizacion.</td></tr>
+<tr><td>HU-041</td><td>Crear receta manual</td><td>Como usuario, quiero definir si la receta es publica o privada, para controlar visibilidad.</td></tr>
+<tr><td>HU-042</td><td>Crear receta manual</td><td>Como usuario, quiero abrir planificacion desde la receta manual guardada, para asignarla al plan semanal.</td></tr>
+<tr><td>HU-043</td><td>Crear receta manual</td><td>Como usuario, quiero compartir mi receta manual, para enviarla a otras personas.</td></tr>
+<tr><td>HU-044</td><td>Importar por URL</td><td>Como usuario, quiero importar receta desde un enlace web/social, para ahorrar captura manual.</td></tr>
+<tr><td>HU-045</td><td>Importar por URL</td><td>Como usuario, quiero validacion de URL (http/https), para evitar entradas invalidas.</td></tr>
+<tr><td>HU-046</td><td>Importar por URL</td><td>Como usuario, quiero que la receta importada se abra en modo edicion, para ajustar datos antes de usarla.</td></tr>
+<tr><td>HU-047</td><td>Importar por imagen</td><td>Como usuario, quiero importar receta desde una imagen de galeria, para digitalizar recetas visuales.</td></tr>
+<tr><td>HU-048</td><td>Importar por imagen</td><td>Como usuario, quiero importar receta tomando una foto, para capturar recetas fisicas al momento.</td></tr>
+<tr><td>HU-049</td><td>Importar por imagen</td><td>Como usuario, quiero mensajes claros sobre si la imagen se pudo leer o no, para entender el resultado.</td></tr>
+<tr><td>HU-050</td><td>Importar por texto</td><td>Como usuario, quiero pegar texto de una receta y procesarlo, para convertirlo en receta estructurada.</td></tr>
+<tr><td>HU-051</td><td>Importar por texto</td><td>Como usuario, quiero pegar desde portapapeles en un clic, para agilizar la importacion por texto.</td></tr>
+<tr><td>HU-052</td><td>Ver receta</td><td>Como usuario, quiero ver el detalle de receta (titulo, descripcion, ingredientes, pasos), para consultarla mientras cocino.</td></tr>
+<tr><td>HU-053</td><td>Ver receta</td><td>Como usuario, quiero ver informacion contextual (recetario, planificacion, visibilidad, cobertura en lista), para entender estado de la receta.</td></tr>
+<tr><td>HU-054</td><td>Ver receta</td><td>Como usuario, quiero abrir enlace de origen cuando exista, para revisar la fuente original.</td></tr>
+<tr><td>HU-055</td><td>Ver receta</td><td>Como usuario, quiero compartir receta, para enviarla facilmente.</td></tr>
+<tr><td>HU-056</td><td>Ver receta</td><td>Como usuario, quiero exportar/imprimir receta, para usarla fuera de la app.</td></tr>
+<tr><td>HU-057</td><td>Ver receta propia</td><td>Como usuario, quiero marcar receta como cocinada, para llevar historial.</td></tr>
+<tr><td>HU-058</td><td>Ver receta propia</td><td>Como usuario, quiero calificar una receta con estrellas, para registrar mi valoracion personal.</td></tr>
+<tr><td>HU-059</td><td>Ver receta propia</td><td>Como usuario, quiero guardar notas de cocinado por receta, para recordar ajustes o comentarios.</td></tr>
+<tr><td>HU-060</td><td>Ver receta propia</td><td>Como usuario, quiero editar receta, para actualizar informacion.</td></tr>
+<tr><td>HU-061</td><td>Editar receta propia</td><td>Como usuario, quiero cambiar foto principal (camara/galeria), para mejorar la presentacion.</td></tr>
+<tr><td>HU-062</td><td>Editar receta propia</td><td>Como usuario, quiero agregar foto por paso, para documentar mejor el proceso.</td></tr>
+<tr><td>HU-063</td><td>Editar receta propia</td><td>Como usuario, quiero reordenar pasos con botones subir/bajar, para corregir el orden facilmente.</td></tr>
+<tr><td>HU-064</td><td>Editar receta propia</td><td>Como usuario, quiero agregar y eliminar ingredientes y pasos, para mantener la receta al dia.</td></tr>
+<tr><td>HU-065</td><td>Editar receta propia</td><td>Como usuario, quiero cambiar visibilidad publica/privada desde detalle, para ajustar privacidad rapidamente.</td></tr>
+<tr><td>HU-066</td><td>Ver receta propia</td><td>Como usuario, quiero borrar una receta con confirmacion, para evitar eliminaciones accidentales.</td></tr>
+<tr><td>HU-067</td><td>Ver receta propia</td><td>Como usuario, quiero gestionar en que recetarios aparece una receta, para controlar su ubicacion.</td></tr>
+<tr><td>HU-068</td><td>Ver receta propia</td><td>Como usuario, quiero seleccionar ingredientes de la receta y agregarlos a lista de compras, para planificar compras rapido.</td></tr>
+<tr><td>HU-069</td><td>Ver receta externa</td><td>Como usuario, quiero ver recetas publicas de otros usuarios sin editarlas, para inspirarme y explorar.</td></tr>
+<tr><td>HU-070</td><td>Ver receta externa</td><td>Como usuario, quiero copiar una receta externa a mis recetarios, para editarla como propia despues.</td></tr>
+<tr><td>HU-071</td><td>Plan (tab)</td><td>Como usuario, quiero ver mi semana de comidas, para planificar desayuno, snack, almuerzo y cena.</td></tr>
+<tr><td>HU-072</td><td>Plan (tab)</td><td>Como usuario, quiero moverme entre semanas (anterior/siguiente), para revisar o planificar periodos distintos.</td></tr>
+<tr><td>HU-073</td><td>Plan (tab)</td><td>Como usuario, quiero asignar receta a un dia completo o a un tiempo especifico de comida, para planificar con precision.</td></tr>
+<tr><td>HU-074</td><td>Plan (tab)</td><td>Como usuario, quiero abrir la receta asignada desde el plan, para consultar detalles al instante.</td></tr>
+<tr><td>HU-075</td><td>Plan (tab)</td><td>Como usuario, quiero remover una receta de un slot del plan, para ajustar cambios de ultima hora.</td></tr>
+<tr><td>HU-076</td><td>Plan (modal de asignacion)</td><td>Como usuario, quiero elegir receta, fecha futura y tiempo de comida al planificar, para guardar una asignacion valida.</td></tr>
+<tr><td>HU-077</td><td>Plan (modal de asignacion)</td><td>Como usuario, quiero validaciones de fecha y tipo de comida, para evitar guardar asignaciones invalidas.</td></tr>
+<tr><td>HU-078</td><td>Lista (tab)</td><td>Como usuario, quiero agregar items a mi lista de compras, para no olvidar productos.</td></tr>
+<tr><td>HU-079</td><td>Lista (tab)</td><td>Como usuario, quiero marcar items como completados/no completados, para llevar progreso de compras.</td></tr>
+<tr><td>HU-080</td><td>Lista (tab)</td><td>Como usuario, quiero borrar items completados, para mantener la lista limpia.</td></tr>
+<tr><td>HU-081</td><td>Lista (tab)</td><td>Como usuario, quiero borrar toda la lista, para reiniciar una compra nueva.</td></tr>
+<tr><td>HU-082</td><td>Lista (tab)</td><td>Como usuario, quiero ver el origen &quot;de &lt;receta&gt;&quot; en items generados desde recetas, para entender contexto.</td></tr>
+<tr><td>HU-083</td><td>Lista (tab)</td><td>Como usuario, quiero ver emojis relacionados por item, para identificar productos visualmente mas rapido.</td></tr>
+<tr><td>HU-084</td><td>Perfil (tab)</td><td>Como usuario, quiero ver mi informacion de perfil (nombre, correo, foto), para confirmar mi cuenta activa.</td></tr>
+<tr><td>HU-085</td><td>Perfil (tab)</td><td>Como usuario, quiero editar nombre y foto de perfil, para personalizar mi cuenta.</td></tr>
+<tr><td>HU-086</td><td>Perfil (tab)</td><td>Como usuario, quiero guardar cambios de perfil y recibir confirmacion, para saber que se actualizo correctamente.</td></tr>
+<tr><td>HU-087</td><td>Perfil (tab)</td><td>Como usuario, quiero compartir la app con amigos, para recomendar SaveMyDish.</td></tr>
+<tr><td>HU-088</td><td>Perfil (tab)</td><td>Como usuario, quiero abrir ayuda (placeholder), para consultar soporte cuando lo necesite.</td></tr>
+<tr><td>HU-089</td><td>Perfil (tab)</td><td>Como usuario, quiero abrir informacion de SaveMyDish Plus, para conocer proximas mejoras.</td></tr>
+<tr><td>HU-090</td><td>Perfil (tab)</td><td>Como usuario, quiero cerrar sesion desde perfil, para proteger mi cuenta al terminar.</td></tr>
+</tbody>
+</table>
+</div>
+<h2>Notas</h2>
+<ul>
+<li>Este documento describe funcionalidades de interfaz y flujos de usuario actualmente implementados.</li>
+<li>Puede extenderse con criterios de aceptacion por historia en una segunda version (<code>Given/When/Then</code>).</li>
+</ul>
+
+      <p class="footer">Generado automaticamente desde <code>docs/historias-de-usuario.md</code>.</p>
+    </section>
+  </main>
+</body>
+</html>
