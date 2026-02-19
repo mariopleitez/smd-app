@@ -1555,12 +1555,18 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     });
 
     const pdfBlob = doc.output('blob');
-    const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
     let hasShared = false;
 
-    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+    const canSharePdfFile =
+      typeof navigator !== 'undefined' &&
+      typeof navigator.share === 'function' &&
+      typeof navigator.canShare === 'function' &&
+      typeof File !== 'undefined';
+
+    if (canSharePdfFile) {
       try {
-        if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [pdfFile] })) {
+        const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
+        if (navigator.canShare({ files: [pdfFile] })) {
           await navigator.share({
             title: recipeTitle,
             text: `Receta: ${recipeTitle}`,
@@ -1577,15 +1583,27 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
 
     if (!hasShared && typeof document !== 'undefined') {
       const downloadUrl = URL.createObjectURL(pdfBlob);
-      const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      const userAgent = typeof navigator !== 'undefined' ? String(navigator.userAgent || '') : '';
+      const isIosBrowser = /iPad|iPhone|iPod/.test(userAgent);
+
+      if (isIosBrowser) {
+        const openedWindow = window.open(downloadUrl, '_blank', 'noopener,noreferrer');
+        if (!openedWindow) {
+          window.location.href = downloadUrl;
+        }
+      } else {
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = fileName;
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
       setTimeout(() => {
         URL.revokeObjectURL(downloadUrl);
-      }, 0);
+      }, 4000);
       return { shared: false, downloaded: true, canceled: false };
     }
 
@@ -1598,6 +1616,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     }
 
     const { recipeTitle, recipeDescription, recipeIngredients, recipeSteps, fileName } = buildRecipePdfPayload();
+    setRecipeDetailFeedback('Generando PDF...');
 
     if (Platform.OS === 'web') {
       try {
@@ -1861,7 +1880,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
                         }}
                         disabled={isDeletingRecipe}
                       >
-                        <Text style={styles.recipeDetailMoreMenuItemText}>Exportar</Text>
+                        <Text style={styles.recipeDetailMoreMenuItemText}>Exportar PDF</Text>
                       </TouchableOpacity>
 
                       <TouchableOpacity
