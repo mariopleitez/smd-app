@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { getFoodEmoji } from '../../lib/foodEmoji';
 
 export default function ListaTabScreen({
   styles,
@@ -83,6 +84,7 @@ export default function ListaTabScreen({
           ) : (
             shoppingItems.map((item) => {
               const { displayName, sourceRecipeName } = decodeShoppingItemName(item.name);
+              const itemEmoji = getFoodEmoji(displayName, '🛒');
 
               return (
                 <TouchableOpacity
@@ -92,9 +94,12 @@ export default function ListaTabScreen({
                   disabled={isMutatingList}
                 >
                   <View style={styles.listItemContent}>
-                    <Text style={[styles.itemText, item.is_completed && styles.itemTextCompleted]}>
-                      {displayName}
-                    </Text>
+                    <View style={styles.listItemTitleRow}>
+                      <Text style={styles.itemEmoji}>{itemEmoji}</Text>
+                      <Text style={[styles.itemText, item.is_completed && styles.itemTextCompleted]}>
+                        {displayName}
+                      </Text>
+                    </View>
                     {sourceRecipeName ? (
                       <Text
                         style={[
@@ -120,4 +125,3 @@ export default function ListaTabScreen({
     </View>
   );
 }
-

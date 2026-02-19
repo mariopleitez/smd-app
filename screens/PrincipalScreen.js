@@ -25,6 +25,7 @@ import * as ExpoClipboard from 'expo-clipboard';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { fonts, palette, spacing } from '../theme';
+import { getFoodEmoji } from '../lib/foodEmoji';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import RecetasTabScreen from './main-tabs/RecetasTabScreen';
 import ListaTabScreen from './main-tabs/ListaTabScreen';
@@ -2078,37 +2079,40 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
           ) : null}
 
           <Text style={styles.manualSectionTitle}>Ingredientes</Text>
-          {recipeDetailDraft.ingredients.map((item, index) => (
-            <View key={`detail-ingredient-${index}`} style={styles.manualListRow}>
-              {isEditingRecipeDetail ? (
-                <TouchableOpacity
-                  style={[
-                    styles.manualDeleteItemButton,
-                    (recipeDetailDraft.ingredients.length <= 1 || isSavingRecipeDetail) && styles.buttonDisabled,
-                  ]}
-                  onPress={() => removeRecipeDraftIngredient(index)}
-                  disabled={recipeDetailDraft.ingredients.length <= 1 || isSavingRecipeDetail}
-                >
-                  <Ionicons name="remove-circle-outline" size={18} color="#8B9AAA" />
-                </TouchableOpacity>
-              ) : (
-                <Text style={styles.recipeDetailBullet}>•</Text>
-              )}
+          {recipeDetailDraft.ingredients.map((item, index) => {
+            const ingredientEmoji = getFoodEmoji(item, '🥣');
+            return (
+              <View key={`detail-ingredient-${index}`} style={styles.manualListRow}>
+                {isEditingRecipeDetail ? (
+                  <TouchableOpacity
+                    style={[
+                      styles.manualDeleteItemButton,
+                      (recipeDetailDraft.ingredients.length <= 1 || isSavingRecipeDetail) && styles.buttonDisabled,
+                    ]}
+                    onPress={() => removeRecipeDraftIngredient(index)}
+                    disabled={recipeDetailDraft.ingredients.length <= 1 || isSavingRecipeDetail}
+                  >
+                    <Ionicons name="remove-circle-outline" size={18} color="#8B9AAA" />
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.recipeDetailIngredientEmoji}>{ingredientEmoji}</Text>
+                )}
 
-              {isEditingRecipeDetail ? (
-                <TextInput
-                  style={styles.manualListInput}
-                  value={item}
-                  onChangeText={(value) => updateRecipeDraftIngredient(index, value)}
-                  placeholder="Agregar ingrediente..."
-                  placeholderTextColor={palette.mutedText}
-                  editable={!isSavingRecipeDetail}
-                />
-              ) : (
-                <Text style={styles.recipeDetailReadText}>{item || '-'}</Text>
-              )}
-            </View>
-          ))}
+                {isEditingRecipeDetail ? (
+                  <TextInput
+                    style={styles.manualListInput}
+                    value={item}
+                    onChangeText={(value) => updateRecipeDraftIngredient(index, value)}
+                    placeholder="Agregar ingrediente..."
+                    placeholderTextColor={palette.mutedText}
+                    editable={!isSavingRecipeDetail}
+                  />
+                ) : (
+                  <Text style={styles.recipeDetailReadText}>{item || '-'}</Text>
+                )}
+              </View>
+            );
+          })}
           {isEditingRecipeDetail ? (
             <TouchableOpacity
               style={[styles.manualAddMiniButton, isSavingRecipeDetail && styles.buttonDisabled]}
@@ -6242,6 +6246,15 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingRight: 8,
   },
+  listItemTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  itemEmoji: {
+    fontSize: 18,
+    lineHeight: 22,
+  },
   itemText: {
     flex: 1,
     color: palette.accent,
@@ -7079,11 +7092,10 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
     minHeight: 78,
   },
-  recipeDetailBullet: {
-    width: 18,
-    color: palette.accent,
-    fontFamily: fonts.regular,
-    fontSize: 14,
+  recipeDetailIngredientEmoji: {
+    width: 22,
+    fontSize: 18,
+    lineHeight: 22,
   },
   recipeDetailReadText: {
     flex: 1,
