@@ -21,7 +21,9 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { Audio } from 'expo-av';
 import * as ExpoClipboard from 'expo-clipboard';
+import * as FileSystem from 'expo-file-system';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { fonts, palette, spacing } from '../theme';
@@ -60,12 +62,17 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
   const [isCameraImportPickerOpen, setIsCameraImportPickerOpen] = useState(false);
   const [isImportUrlModalOpen, setIsImportUrlModalOpen] = useState(false);
   const [isPasteTextModalOpen, setIsPasteTextModalOpen] = useState(false);
+  const [isDictationModalOpen, setIsDictationModalOpen] = useState(false);
   const [importUrl, setImportUrl] = useState('');
   const [pasteRecipeText, setPasteRecipeText] = useState('');
+  const [dictationRecipeText, setDictationRecipeText] = useState('');
   const [isImportingRecipe, setIsImportingRecipe] = useState(false);
   const [imageImportProgressText, setImageImportProgressText] = useState('');
   const [importFeedback, setImportFeedback] = useState('');
   const [pasteRecipeFeedback, setPasteRecipeFeedback] = useState('');
+  const [dictationRecipeFeedback, setDictationRecipeFeedback] = useState('');
+  const [isDictatingRecipe, setIsDictatingRecipe] = useState(false);
+  const [isTranscribingRecipeAudio, setIsTranscribingRecipeAudio] = useState(false);
   const [isManualRecipeModalOpen, setIsManualRecipeModalOpen] = useState(false);
   const [manualRecipeTitle, setManualRecipeTitle] = useState('');
   const [manualMainPhotoUrl, setManualMainPhotoUrl] = useState('');
@@ -159,6 +166,8 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
   const cookbooksRef = useRef([]);
   const recipeDetailsCacheRef = useRef({});
   const recipeDetailRequestIdRef = useRef(0);
+  const speechRecognitionRef = useRef(null);
+  const audioRecordingRef = useRef(null);
   useEffect(() => {
     if (activeTab === displayedTab) {
       return;
@@ -2811,6 +2820,372 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     });
   };
 
+  const closeDictationImportModal = () => {
+    const activeRecognition = speechRecognitionRef.current;
+    if (activeRecognition && typeof activeRecognition.stop === 'function') {
+      try {
+        activeRecognition.stop();
+      } catch (_stopError) {
+        // No bloqueamos el cierre por errores de SpeechRecognition.
+      }
+    }
+
+    const activeRecording = audioRecordingRef.current;
+    if (activeRecording && typeof activeRecording.stopAndUnloadAsync === 'function') {
+      void activeRecording.stopAndUnloadAsync().catch(() => null);
+      void Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => null);
+    }
+
+    speechRecognitionRef.current = null;
+    audioRecordingRef.current = null;
+    setIsDictatingRecipe(false);
+    setIsTranscribingRecipeAudio(false);
+    setIsDictationModalOpen(false);
+  };
+
+  const handleOpenDictationImport = () => {
+    closeCreateRecipeSheet(() => {
+      setDictationRecipeText('');
+      setDictationRecipeFeedback('');
+      setIsDictatingRecipe(false);
+      setIsTranscribingRecipeAudio(false);
+      setIsDictationModalOpen(true);
+    });
+  };
+
+  const getSpeechRecognitionConstructor = () => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      return null;
+    }
+
+    return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  };
+
+  const handleStartRecipeDictation = async () => {
+    if (isImportingRecipe || isTranscribingRecipeAudio) {
+      return;
+    }
+
+    if (Platform.OS !== 'web') {
+      try {
+        const permissionResponse = await Audio.requestPermissionsAsync();
+        if (!permissionResponse.granted) {
+          setDictationRecipeFeedback('Permiso de micrófono denegado.');
+          return;
+        }
+
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+        });
+
+        const recording = new Audio.Recording();
+        await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+        await recording.startAsync();
+
+        audioRecordingRef.current = recording;
+        setIsDictatingRecipe(true);
+        setDictationRecipeFeedback('Grabando... Presiona Detener cuando termines.');
+      } catch (_nativeRecordError) {
+        setIsDictatingRecipe(false);
+        audioRecordingRef.current = null;
+        setDictationRecipeFeedback('No se pudo iniciar la grabación de audio.');
+      }
+      return;
+    }
+
+    const SpeechRecognitionConstructor = getSpeechRecognitionConstructor();
+    if (!SpeechRecognitionConstructor) {
+      setDictationRecipeFeedback('El dictado no está disponible en este navegador.');
+      return;
+    }
+
+    const previousRecognition = speechRecognitionRef.current;
+    if (previousRecognition && typeof previousRecognition.stop === 'function') {
+      try {
+        previousRecognition.stop();
+      } catch (_previousStopError) {
+        // Sin impacto para el usuario.
+      }
+    }
+
+    try {
+      const recognition = new SpeechRecognitionConstructor();
+      recognition.lang = 'es-ES';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        setIsDictatingRecipe(true);
+        setDictationRecipeFeedback('Escuchando... Dicta tu receta.');
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = Array.from(event.results || [])
+          .map((result) => String(result?.[0]?.transcript || ''))
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        setDictationRecipeText(transcript);
+        if (transcript) {
+          setDictationRecipeFeedback('');
+        }
+      };
+
+      recognition.onerror = (event) => {
+        const errorCode = String(event?.error || '').toLowerCase();
+        if (errorCode === 'not-allowed' || errorCode === 'service-not-allowed') {
+          setDictationRecipeFeedback(
+            'Permiso de micrófono denegado. Habilítalo en tu navegador e intenta de nuevo.'
+          );
+        } else if (errorCode === 'audio-capture') {
+          setDictationRecipeFeedback('No se detectó micrófono disponible.');
+        } else if (errorCode === 'no-speech') {
+          setDictationRecipeFeedback('No se detectó voz. Intenta dictar nuevamente.');
+        } else {
+          setDictationRecipeFeedback('No se pudo transcribir el audio. Intenta otra vez.');
+        }
+      };
+
+      recognition.onend = () => {
+        setIsDictatingRecipe(false);
+        speechRecognitionRef.current = null;
+      };
+
+      speechRecognitionRef.current = recognition;
+      recognition.start();
+    } catch (_startError) {
+      speechRecognitionRef.current = null;
+      setIsDictatingRecipe(false);
+      setDictationRecipeFeedback('No se pudo iniciar el dictado en este dispositivo.');
+    }
+  };
+
+  const handleStopRecipeDictation = () => {
+    if (Platform.OS !== 'web') {
+      const activeRecording = audioRecordingRef.current;
+      if (!activeRecording || typeof activeRecording.stopAndUnloadAsync !== 'function') {
+        setIsDictatingRecipe(false);
+        return;
+      }
+
+      setIsTranscribingRecipeAudio(true);
+      setDictationRecipeFeedback('Transcribiendo audio...');
+
+      (async () => {
+        try {
+          await activeRecording.stopAndUnloadAsync();
+          const recordingUri = activeRecording.getURI();
+          audioRecordingRef.current = null;
+          setIsDictatingRecipe(false);
+          await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+
+          if (!recordingUri) {
+            setDictationRecipeFeedback('No se pudo obtener el audio grabado.');
+            return;
+          }
+
+          if (!supabase || !isSupabaseConfigured || !userId) {
+            setDictationRecipeFeedback('Debes iniciar sesión y configurar Supabase para transcribir.');
+            return;
+          }
+
+          const base64Audio = await FileSystem.readAsStringAsync(recordingUri, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          if (!base64Audio) {
+            setDictationRecipeFeedback('No se pudo leer el audio grabado.');
+            return;
+          }
+
+          const edgeAuthHeaders = await getEdgeFunctionAuthHeaders();
+          if (!edgeAuthHeaders) {
+            setDictationRecipeFeedback('Tu sesión no es válida. Cierra sesión y vuelve a entrar.');
+            return;
+          }
+
+          const normalizedUri = String(recordingUri || '').toLowerCase();
+          let mimeType = 'audio/mp4';
+          if (normalizedUri.endsWith('.wav')) {
+            mimeType = 'audio/wav';
+          } else if (normalizedUri.endsWith('.mp3')) {
+            mimeType = 'audio/mpeg';
+          } else if (normalizedUri.endsWith('.caf')) {
+            mimeType = 'audio/x-caf';
+          } else if (normalizedUri.endsWith('.webm')) {
+            mimeType = 'audio/webm';
+          }
+
+          const { data, error } = await supabase.functions.invoke('transcribe-recipe-audio', {
+            body: {
+              audio_base64: base64Audio,
+              mime_type: mimeType,
+            },
+            headers: edgeAuthHeaders,
+          });
+
+          if (error) {
+            const detailedMessage = await resolveInvokeErrorMessage(
+              error,
+              'No se pudo transcribir el audio.'
+            );
+            setDictationRecipeFeedback(detailedMessage);
+            return;
+          }
+
+          const transcriptText = String(data?.text || '').trim();
+          if (!transcriptText) {
+            setDictationRecipeFeedback('No se detectó texto útil en el audio.');
+            return;
+          }
+
+          setDictationRecipeText(transcriptText);
+          setDictationRecipeFeedback('Audio transcrito. Revisa y toca Importar.');
+        } catch (_nativeStopError) {
+          setDictationRecipeFeedback('No se pudo detener o transcribir la grabación.');
+        } finally {
+          setIsTranscribingRecipeAudio(false);
+          setIsDictatingRecipe(false);
+        }
+      })();
+      return;
+    }
+
+    const recognition = speechRecognitionRef.current;
+    if (!recognition || typeof recognition.stop !== 'function') {
+      setIsDictatingRecipe(false);
+      return;
+    }
+
+    try {
+      recognition.stop();
+      setDictationRecipeFeedback((prevFeedback) =>
+        prevFeedback || 'Dictado detenido. Revisa el texto antes de importar.'
+      );
+    } catch (_stopError) {
+      setIsDictatingRecipe(false);
+    }
+  };
+
+  useEffect(
+    () => () => {
+      const activeRecognition = speechRecognitionRef.current;
+      if (activeRecognition && typeof activeRecognition.stop === 'function') {
+        try {
+          activeRecognition.stop();
+        } catch (_stopError) {
+          // Limpieza defensiva al desmontar.
+        }
+      }
+
+      const activeRecording = audioRecordingRef.current;
+      if (activeRecording && typeof activeRecording.stopAndUnloadAsync === 'function') {
+        void activeRecording.stopAndUnloadAsync().catch(() => null);
+      }
+      void Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => null);
+    },
+    []
+  );
+
+  const resolveInvokeErrorMessage = async (error, fallbackMessage) => {
+    let detailedMessage = error?.message || fallbackMessage;
+    const contextResponse = error?.context;
+    if (!contextResponse) {
+      return detailedMessage;
+    }
+
+    try {
+      const payload = await contextResponse.clone().json();
+      if (typeof payload?.error === 'string' && payload.error) {
+        detailedMessage = payload.error;
+      } else if (typeof payload?.message === 'string' && payload.message) {
+        detailedMessage = payload.message;
+      }
+    } catch (_jsonError) {
+      try {
+        const rawErrorText = await contextResponse.clone().text();
+        if (rawErrorText) {
+          detailedMessage = rawErrorText;
+        }
+      } catch (_textError) {
+        // fallback to default message
+      }
+    }
+
+    return detailedMessage;
+  };
+
+  const importRecipeFromTextPayload = async (rawText, setFeedback) => {
+    if (!supabase || !isSupabaseConfigured || !userId) {
+      setFeedback('Debes iniciar sesión y configurar Supabase para importar.');
+      return false;
+    }
+
+    const normalizedText = String(rawText || '').trim();
+    if (!normalizedText) {
+      setFeedback('Ingresa o dicta el texto de la receta para importar.');
+      return false;
+    }
+
+    const edgeAuthHeaders = await getEdgeFunctionAuthHeaders();
+    if (!edgeAuthHeaders) {
+      setFeedback('Tu sesión no es válida. Cierra sesión y vuelve a entrar.');
+      return false;
+    }
+
+    setIsImportingRecipe(true);
+    setFeedback('Leyendo...');
+
+    let data;
+    let error;
+    try {
+      const response = await supabase.functions.invoke('import-recipe-from-text', {
+        body: {
+          text: normalizedText,
+        },
+        headers: edgeAuthHeaders,
+      });
+      data = response.data;
+      error = response.error;
+    } catch (invokeError) {
+      setIsImportingRecipe(false);
+      setFeedback(invokeError instanceof Error ? invokeError.message : 'Error al procesar el texto.');
+      return false;
+    }
+
+    setIsImportingRecipe(false);
+
+    if (error) {
+      const detailedMessage = await resolveInvokeErrorMessage(
+        error,
+        'No se pudo importar la receta desde texto.'
+      );
+      setFeedback(detailedMessage);
+      return false;
+    }
+
+    if (data?.error) {
+      setFeedback(String(data.error));
+      return false;
+    }
+
+    const importedRecipeId = data?.recipe?.id;
+    if (!importedRecipeId) {
+      setFeedback('Se procesó el texto, pero no se pudo abrir la receta.');
+      return false;
+    }
+
+    const openedInEditor = await openRecipeInManualEditForm(importedRecipeId, data?.recipe || null);
+    if (!openedInEditor) {
+      setFeedback('Se importó la receta, pero no se pudo abrir en modo edición.');
+      return false;
+    }
+
+    return true;
+  };
+
   const handlePasteFromClipboard = async () => {
     try {
       if (Platform.OS !== 'web') {
@@ -2846,89 +3221,51 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
   };
 
   const handleImportRecipeFromPastedText = async () => {
-    if (!supabase || !isSupabaseConfigured || !userId) {
-      setPasteRecipeFeedback('Debes iniciar sesión y configurar Supabase para importar.');
-      return;
-    }
-
     const rawText = pasteRecipeText.trim();
     if (!rawText) {
       setPasteRecipeFeedback('Pega o escribe el texto de la receta para importar.');
       return;
     }
 
-    const edgeAuthHeaders = await getEdgeFunctionAuthHeaders();
-    if (!edgeAuthHeaders) {
-      setPasteRecipeFeedback('Tu sesión no es válida. Cierra sesión y vuelve a entrar.');
-      return;
-    }
-
-    setIsImportingRecipe(true);
-    setPasteRecipeFeedback('Leyendo...');
-
-    let data;
-    let error;
-    try {
-      const response = await supabase.functions.invoke('import-recipe-from-text', {
-        body: {
-          text: rawText,
-        },
-        headers: edgeAuthHeaders,
-      });
-      data = response.data;
-      error = response.error;
-    } catch (invokeError) {
-      setIsImportingRecipe(false);
-      setPasteRecipeFeedback(
-        invokeError instanceof Error ? invokeError.message : 'Error al procesar el texto.'
-      );
-      return;
-    }
-
-    setIsImportingRecipe(false);
-
-    if (error) {
-      let detailedMessage = error.message || 'No se pudo importar la receta desde texto.';
-      const contextResponse = error.context;
-      if (contextResponse) {
-        try {
-          const payload = await contextResponse.clone().json();
-          if (typeof payload?.error === 'string' && payload.error) {
-            detailedMessage = payload.error;
-          } else if (typeof payload?.message === 'string' && payload.message) {
-            detailedMessage = payload.message;
-          }
-        } catch (_jsonError) {
-          try {
-            const rawErrorText = await contextResponse.clone().text();
-            if (rawErrorText) {
-              detailedMessage = rawErrorText;
-            }
-          } catch (_textError) {
-            // fallback to default message
-          }
-        }
-      }
-
-      setPasteRecipeFeedback(detailedMessage);
-      return;
-    }
-
-    if (data?.error) {
-      setPasteRecipeFeedback(String(data.error));
-      return;
-    }
-
-    const importedRecipeId = data?.recipe?.id;
-    if (!importedRecipeId) {
-      setPasteRecipeFeedback('Se procesó el texto, pero no se pudo abrir la receta.');
+    const didImport = await importRecipeFromTextPayload(rawText, setPasteRecipeFeedback);
+    if (!didImport) {
       return;
     }
 
     setIsPasteTextModalOpen(false);
     setPasteRecipeText('');
     setPasteRecipeFeedback('');
-    await openRecipeInManualEditForm(importedRecipeId, data?.recipe || null);
+  };
+
+  const handleImportRecipeFromDictation = async () => {
+    if (isDictatingRecipe) {
+      setDictationRecipeFeedback('Detén la grabación antes de importar.');
+      return;
+    }
+
+    if (isTranscribingRecipeAudio) {
+      setDictationRecipeFeedback('Espera a que termine la transcripción.');
+      return;
+    }
+
+    if (isImportingRecipe) {
+      return;
+    }
+
+    const rawText = dictationRecipeText.trim();
+    if (!rawText) {
+      setDictationRecipeFeedback('Primero dicta tu receta o pega texto para importar.');
+      return;
+    }
+
+    const didImport = await importRecipeFromTextPayload(rawText, setDictationRecipeFeedback);
+    if (!didImport) {
+      return;
+    }
+
+    closeDictationImportModal();
+    setDictationRecipeText('');
+    setDictationRecipeFeedback('');
   };
 
   const buildImageImportFailureAlert = ({ statusCode, payloadCode, payloadMessage, canReadImage }) => {
@@ -4972,6 +5309,12 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
                 <Text style={styles.sheetOptionText}>Pegar texto</Text>
               </View>
             </TouchableOpacity>
+            <TouchableOpacity style={styles.sheetOption} onPress={handleOpenDictationImport}>
+              <View style={styles.sheetOptionContent}>
+                <Ionicons name="mic-outline" size={20} color={palette.accent} />
+                <Text style={styles.sheetOptionText}>Dictado</Text>
+              </View>
+            </TouchableOpacity>
             <TouchableOpacity style={styles.sheetOption} onPress={handleOpenManualRecipeForm}>
               <View style={styles.sheetOptionContent}>
                 <Ionicons name="create-outline" size={20} color={palette.accent} />
@@ -5140,6 +5483,128 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
                 >
                   <Text style={styles.importButtonPrimaryText}>
                     {isImportingRecipe ? 'Importando...' : 'Importar'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={isDictationModalOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={closeDictationImportModal}
+      >
+        <View style={styles.importOverlay}>
+          <Pressable style={styles.importBackdrop} onPress={closeDictationImportModal} />
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.importPopupWrap}
+          >
+            <View style={styles.importPopup}>
+              <Text style={styles.importTitle}>Dictar receta</Text>
+              <Text style={styles.importSubtitle}>
+                Habla tu receta y convertiremos el audio en texto para extraer título, descripción,
+                ingredientes y pasos.
+              </Text>
+
+              <View style={styles.dictationControlsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.dictationControlButton,
+                    isDictatingRecipe && styles.dictationControlButtonActive,
+                    (isImportingRecipe || isTranscribingRecipeAudio) && styles.buttonDisabled,
+                  ]}
+                  onPress={handleStartRecipeDictation}
+                  disabled={isImportingRecipe || isTranscribingRecipeAudio || isDictatingRecipe}
+                >
+                  <Ionicons
+                    name={isDictatingRecipe ? 'radio-button-on' : 'mic-outline'}
+                    size={16}
+                    color={isDictatingRecipe ? palette.card : palette.accent}
+                  />
+                  <Text
+                    style={[
+                      styles.dictationControlButtonText,
+                      isDictatingRecipe && styles.dictationControlButtonTextActive,
+                    ]}
+                  >
+                    {isDictatingRecipe
+                      ? Platform.OS === 'web'
+                        ? 'Escuchando...'
+                        : 'Grabando...'
+                      : 'Iniciar dictado'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.importButtonSecondary,
+                    (!isDictatingRecipe || isImportingRecipe || isTranscribingRecipeAudio) &&
+                      styles.buttonDisabled,
+                  ]}
+                  onPress={handleStopRecipeDictation}
+                  disabled={!isDictatingRecipe || isImportingRecipe || isTranscribingRecipeAudio}
+                >
+                  <Text style={styles.importButtonSecondaryText}>
+                    {isTranscribingRecipeAudio ? 'Transcribiendo...' : 'Detener'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <TextInput
+                style={[styles.importInput, styles.pasteTextInput]}
+                value={dictationRecipeText}
+                onChangeText={setDictationRecipeText}
+                placeholder="Tu dictado aparecerá aquí..."
+                placeholderTextColor={palette.mutedText}
+                editable={!isImportingRecipe && !isTranscribingRecipeAudio}
+                multiline
+                textAlignVertical="top"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+
+              {dictationRecipeFeedback ? (
+                <Text
+                  style={[
+                    styles.importFeedback,
+                    (dictationRecipeFeedback.toLowerCase().includes('leyendo') ||
+                      dictationRecipeFeedback.toLowerCase().includes('transcrib')) &&
+                      styles.importFeedbackInfo,
+                  ]}
+                >
+                  {dictationRecipeFeedback}
+                </Text>
+              ) : null}
+
+              <View style={styles.importActions}>
+                <TouchableOpacity
+                  style={[
+                    styles.importButtonSecondary,
+                    (isImportingRecipe || isTranscribingRecipeAudio) && styles.buttonDisabled,
+                  ]}
+                  onPress={closeDictationImportModal}
+                  disabled={isImportingRecipe || isTranscribingRecipeAudio}
+                >
+                  <Text style={styles.importButtonSecondaryText}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.importButtonPrimary,
+                    (isImportingRecipe || isTranscribingRecipeAudio || !dictationRecipeText.trim()) &&
+                      styles.buttonDisabled,
+                  ]}
+                  onPress={handleImportRecipeFromDictation}
+                  disabled={isImportingRecipe || isTranscribingRecipeAudio || !dictationRecipeText.trim()}
+                >
+                  <Text style={styles.importButtonPrimaryText}>
+                    {isImportingRecipe
+                      ? 'Importando...'
+                      : isTranscribingRecipeAudio
+                        ? 'Transcribiendo...'
+                        : 'Importar'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -6731,6 +7196,35 @@ const styles = StyleSheet.create({
   pasteTextInput: {
     minHeight: 220,
     maxHeight: 300,
+  },
+  dictationControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  dictationControlButton: {
+    flex: 1,
+    minHeight: 40,
+    borderWidth: 1,
+    borderColor: palette.accent,
+    borderRadius: 10,
+    backgroundColor: palette.card,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+  },
+  dictationControlButtonActive: {
+    backgroundColor: palette.accent,
+  },
+  dictationControlButtonText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+  },
+  dictationControlButtonTextActive: {
+    color: palette.card,
   },
   importFeedback: {
     color: '#B42318',

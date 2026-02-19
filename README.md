@@ -12,6 +12,7 @@ Current scope: auth, recipe management, private cookbooks, shopping list, and we
   - URL (`import-recipe-from-url`)
   - Pasted text (`import-recipe-from-text`)
   - Image/OCR (`import-recipe-from-image`)
+  - Voice dictation (web speech on web + audio transcription in mobile via `transcribe-recipe-audio`)
 - Shopping list per user (`shopping_items`), including recipe-origin metadata.
 - Weekly meal plan per user/day (`meal_plans`) with `breakfast_recipe_id`, `snack_recipe_id`, `lunch_recipe_id`, and `dinner_recipe_id`.
 - Per-user recipe feedback (`recipe_user_feedback`): cooked toggle, rating (0-5), and notes.
@@ -85,6 +86,7 @@ The main app is orchestrated by `screens/PrincipalScreen.js`, with tab views spl
 - `supabase/functions/import-recipe-from-url/`: import recipe from webpage URL.
 - `supabase/functions/import-recipe-from-text/`: import recipe from pasted text.
 - `supabase/functions/import-recipe-from-image/`: import recipe from image/OCR.
+- `supabase/functions/transcribe-recipe-audio/`: transcribe recorded audio dictation to text.
 
 ## Prerequisites
 
@@ -172,6 +174,7 @@ Deploy:
 supabase functions deploy import-recipe-from-url --project-ref <your-project-ref>
 supabase functions deploy import-recipe-from-text --project-ref <your-project-ref>
 supabase functions deploy import-recipe-from-image --project-ref <your-project-ref>
+supabase functions deploy transcribe-recipe-audio --project-ref <your-project-ref>
 ```
 
 Optional AI-assisted extraction:
@@ -179,6 +182,7 @@ Optional AI-assisted extraction:
 ```bash
 supabase secrets set OPENAI_API_KEY=<your-openai-key> --project-ref <your-project-ref>
 supabase secrets set OPENAI_RECIPE_MODEL=gpt-4.1-mini --project-ref <your-project-ref>
+supabase secrets set OPENAI_TRANSCRIBE_MODEL=whisper-1 --project-ref <your-project-ref>
 ```
 
 Notes:
@@ -188,6 +192,7 @@ Notes:
   - `supabase.functions.invoke('import-recipe-from-url', ...)`
   - `supabase.functions.invoke('import-recipe-from-text', ...)`
   - `supabase.functions.invoke('import-recipe-from-image', ...)`
+  - `supabase.functions.invoke('transcribe-recipe-audio', ...)`
 
 ## Security Model
 

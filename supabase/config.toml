@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.import-recipe-from-image]
 verify_jwt = false
+
+[functions.transcribe-recipe-audio]
+verify_jwt = false

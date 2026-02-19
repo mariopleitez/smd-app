@@ -13,10 +13,16 @@
     },
     "assetBundlePatterns": ["**/*"],
     "ios": {
-      "icon": "./public/logo.png"
+      "icon": "./public/logo.png",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "SaveMyDish usa el microfono para dictar recetas y convertirlas en texto."
+      }
     },
     "android": {
       "package": "com.savemydish.app",
+      "permissions": [
+        "RECORD_AUDIO"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./public/logo.png",
         "backgroundColor": "#FFF5E6"
