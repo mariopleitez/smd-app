@@ -27,6 +27,10 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { fonts, palette, spacing } from '../theme';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import RecetasTabScreen from './main-tabs/RecetasTabScreen';
+import ListaTabScreen from './main-tabs/ListaTabScreen';
+import PlanTabScreen from './main-tabs/PlanTabScreen';
+import PerfilTabScreen from './main-tabs/PerfilTabScreen';
 
 export default function PrincipalScreen({ onLogout, userEmail, userId, userName }) {
   const tabs = useMemo(
