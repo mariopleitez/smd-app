@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
+  Platform,
   Pressable,
   SafeAreaView,
   StyleSheet,
@@ -119,6 +120,49 @@ export default function App() {
     'Poppins-SemiBold': Poppins_600SemiBold,
     'Poppins-Bold': Poppins_700Bold,
   });
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') {
+      return;
+    }
+
+    const viewportContent =
+      'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
+    const viewportMetaTag = document.querySelector('meta[name="viewport"]');
+    const previousViewportContent = viewportMetaTag?.getAttribute('content') || '';
+
+    if (viewportMetaTag) {
+      viewportMetaTag.setAttribute('content', viewportContent);
+    } else {
+      const createdViewportMeta = document.createElement('meta');
+      createdViewportMeta.setAttribute('name', 'viewport');
+      createdViewportMeta.setAttribute('content', viewportContent);
+      document.head.appendChild(createdViewportMeta);
+    }
+
+    const styleTag = document.createElement('style');
+    styleTag.setAttribute('data-smd-ios-zoom-fix', 'true');
+    styleTag.textContent = `
+      html, body {
+        touch-action: manipulation;
+        -webkit-text-size-adjust: 100%;
+      }
+      input, textarea, select {
+        font-size: 16px !important;
+      }
+      a, button, [role="button"] {
+        touch-action: manipulation;
+      }
+    `;
+    document.head.appendChild(styleTag);
+
+    return () => {
+      styleTag.remove();
+      if (viewportMetaTag) {
+        viewportMetaTag.setAttribute('content', previousViewportContent);
+      }
+    };
+  }, []);
 
   const maybeOfferStarterRecipes = useCallback(async (sessionUser) => {
     if (!supabase || !sessionUser?.id) {

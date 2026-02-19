@@ -1443,12 +1443,19 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
 
-  const handleExportRecipePdf = async () => {
-    if (!selectedRecipeForView) {
-      return;
-    }
+  const sanitizeRecipePdfFileName = (value) => {
+    const cleanValue = String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .toLowerCase();
 
-    const recipeTitle = String(recipeDetailDraft.title || selectedRecipeForView.name || 'Receta').trim() || 'Receta';
+    return cleanValue || 'receta';
+  };
+
+  const buildRecipePdfPayload = () => {
+    const recipeTitle = String(recipeDetailDraft.title || selectedRecipeForView?.name || 'Receta').trim() || 'Receta';
     const recipeDescription = String(recipeDetailDraft.description || '').trim();
     const recipeIngredients = (recipeDetailDraft.ingredients || [])
       .map((item) => String(item || '').trim())
@@ -1456,6 +1463,174 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     const recipeSteps = (recipeDetailDraft.steps || [])
       .map((item) => String(item || '').trim())
       .filter((item) => item.length > 0);
+
+    return {
+      recipeTitle,
+      recipeDescription,
+      recipeIngredients,
+      recipeSteps,
+      fileName: `${sanitizeRecipePdfFileName(recipeTitle)}.pdf`,
+    };
+  };
+
+  const exportRecipePdfInWeb = async ({ recipeTitle, recipeDescription, recipeIngredients, recipeSteps, fileName }) => {
+    const { jsPDF } = await import('jspdf');
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'pt',
+      format: 'a4',
+    });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const marginHorizontal = 48;
+    const marginTop = 56;
+    const marginBottom = 50;
+    const textMaxWidth = pageWidth - marginHorizontal * 2;
+    let cursorY = marginTop;
+
+    const ensurePageSpace = (neededHeight = 20) => {
+      if (cursorY + neededHeight <= pageHeight - marginBottom) {
+        return;
+      }
+      doc.addPage();
+      cursorY = marginTop;
+    };
+
+    const writeTextBlock = ({ text, fontStyle = 'normal', fontSize = 12, lineGap = 5 }) => {
+      const normalizedText = String(text || '').trim() || '-';
+      doc.setFont('helvetica', fontStyle);
+      doc.setFontSize(fontSize);
+
+      const lines = doc.splitTextToSize(normalizedText, textMaxWidth);
+      lines.forEach((line) => {
+        ensurePageSpace(fontSize + lineGap);
+        doc.text(line, marginHorizontal, cursorY);
+        cursorY += fontSize + lineGap;
+      });
+    };
+
+    const writeSectionTitle = (title) => {
+      cursorY += 8;
+      writeTextBlock({
+        text: title,
+        fontStyle: 'bold',
+        fontSize: 15,
+        lineGap: 6,
+      });
+      cursorY += 2;
+    };
+
+    writeTextBlock({
+      text: recipeTitle,
+      fontStyle: 'bold',
+      fontSize: 24,
+      lineGap: 10,
+    });
+
+    writeSectionTitle('Descripcion');
+    writeTextBlock({
+      text: recipeDescription || 'Sin descripcion.',
+    });
+
+    writeSectionTitle('Ingredientes');
+    if (recipeIngredients.length > 0) {
+      recipeIngredients.forEach((ingredient) => {
+        writeTextBlock({ text: `- ${ingredient}` });
+      });
+    } else {
+      writeTextBlock({ text: 'Sin ingredientes.' });
+    }
+
+    writeSectionTitle('Pasos');
+    if (recipeSteps.length > 0) {
+      recipeSteps.forEach((step, index) => {
+        writeTextBlock({ text: `${index + 1}. ${step}` });
+      });
+    } else {
+      writeTextBlock({ text: 'Sin pasos.' });
+    }
+
+    cursorY += 12;
+    writeTextBlock({
+      text: 'Generado por SaveMyDish',
+      fontSize: 10,
+      lineGap: 4,
+    });
+
+    const pdfBlob = doc.output('blob');
+    const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
+    let hasShared = false;
+
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      try {
+        if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [pdfFile] })) {
+          await navigator.share({
+            title: recipeTitle,
+            text: `Receta: ${recipeTitle}`,
+            files: [pdfFile],
+          });
+          hasShared = true;
+        }
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          return { shared: false, downloaded: false, canceled: true };
+        }
+      }
+    }
+
+    if (!hasShared && typeof document !== 'undefined') {
+      const downloadUrl = URL.createObjectURL(pdfBlob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => {
+        URL.revokeObjectURL(downloadUrl);
+      }, 0);
+      return { shared: false, downloaded: true, canceled: false };
+    }
+
+    return { shared: hasShared, downloaded: false, canceled: false };
+  };
+
+  const handleExportRecipePdf = async () => {
+    if (!selectedRecipeForView) {
+      return;
+    }
+
+    const { recipeTitle, recipeDescription, recipeIngredients, recipeSteps, fileName } = buildRecipePdfPayload();
+
+    if (Platform.OS === 'web') {
+      try {
+        const webResult = await exportRecipePdfInWeb({
+          recipeTitle,
+          recipeDescription,
+          recipeIngredients,
+          recipeSteps,
+          fileName,
+        });
+        if (webResult.canceled) {
+          setRecipeDetailFeedback('Exportacion cancelada.');
+          return;
+        }
+        if (webResult.shared) {
+          setRecipeDetailFeedback('PDF generado y compartido correctamente.');
+          return;
+        }
+        if (webResult.downloaded) {
+          setRecipeDetailFeedback('PDF generado y descargado correctamente.');
+          return;
+        }
+        setRecipeDetailFeedback('PDF generado correctamente.');
+        return;
+      } catch (_error) {
+        setRecipeDetailFeedback('No se pudo exportar PDF.');
+        return;
+      }
+    }
 
     const ingredientsHtml = recipeIngredients
       .map((item) => `<li>${escapeRecipePdfHtml(item)}</li>`)
