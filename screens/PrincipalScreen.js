@@ -206,6 +206,53 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     cookbooksRef.current = cookbooks;
   }, [cookbooks]);
 
+  const MAX_CACHE_IMAGE_URL_LENGTH = 512;
+
+  const normalizeRecipeImageForCache = (rawUrl) => {
+    const cleanUrl = String(rawUrl || '').trim();
+    if (!cleanUrl) {
+      return '';
+    }
+
+    if (/^data:image\//i.test(cleanUrl)) {
+      return '';
+    }
+
+    if (
+      cleanUrl.length > MAX_CACHE_IMAGE_URL_LENGTH &&
+      !cleanUrl.startsWith('/') &&
+      !/^https?:\/\//i.test(cleanUrl)
+    ) {
+      return '';
+    }
+
+    return cleanUrl;
+  };
+
+  const normalizeCookbooksForCache = (sourceCookbooks = []) =>
+    (Array.isArray(sourceCookbooks) ? sourceCookbooks : []).map((cookbook) => {
+      const normalizedRecipes = (Array.isArray(cookbook?.recipes) ? cookbook.recipes : []).map((recipe) => ({
+        ...recipe,
+        main_photo_url: normalizeRecipeImageForCache(recipe?.main_photo_url),
+      }));
+
+      const normalizedPreviewRecipes = (Array.isArray(cookbook?.previewRecipes)
+        ? cookbook.previewRecipes
+        : normalizedRecipes
+      )
+        .map((recipe) => ({
+          ...recipe,
+          main_photo_url: normalizeRecipeImageForCache(recipe?.main_photo_url),
+        }))
+        .slice(0, 3);
+
+      return {
+        ...cookbook,
+        recipes: normalizedRecipes,
+        previewRecipes: normalizedPreviewRecipes,
+      };
+    });
+
   const loadCookbooks = useCallback(async ({ force = false } = {}) => {
     if (!isSupabaseConfigured || !supabase) {
       return [];
@@ -380,11 +427,12 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     setIsCookbooksLoading(false);
     lastCookbooksLoadAtRef.current = Date.now();
     try {
+      const cacheFriendlyCookbooks = normalizeCookbooksForCache(listWithUnassigned);
       await AsyncStorage.setItem(
         storageKey,
         JSON.stringify({
           timestamp: Date.now(),
-          cookbooks: listWithUnassigned,
+          cookbooks: cacheFriendlyCookbooks,
         })
       );
     } catch (_cacheWriteError) {
@@ -1166,7 +1214,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
         `smd:cookbooks:${userId}`,
         JSON.stringify({
           timestamp: nextTimestamp,
-          cookbooks: nextCookbooks,
+          cookbooks: normalizeCookbooksForCache(nextCookbooks),
         })
       ).catch(() => {});
       return nextCookbooks;
@@ -1733,22 +1781,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
             <Text style={styles.recipeDetailInfoText}>
               {selectedRecipePlannedSlots.length > 0
                 ? selectedRecipePlannedSlots.join(' · ')
-                : 'Sin planificar en la semana cargada.'}
-            </Text>
-          </View>
-
-          <View style={styles.recipeDetailInfoRow}>
-            <Ionicons
-              name={(isEditingRecipeDetail ? recipeDetailDraft.isPublic : selectedRecipeForView?.is_public)
-                ? 'globe-outline'
-                : 'lock-closed-outline'}
-              size={16}
-              color={palette.accent}
-            />
-            <Text style={styles.recipeDetailInfoText}>
-              {(isEditingRecipeDetail ? recipeDetailDraft.isPublic : selectedRecipeForView?.is_public)
-                ? 'Receta pública'
-                : 'Receta privada'}
+                : 'No incluida en el plan de comidas'}
             </Text>
           </View>
 
@@ -1777,6 +1810,21 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
               </Text>
             </TouchableOpacity>
           ) : null}
+
+          <View style={styles.recipeDetailInfoRow}>
+            <Ionicons
+              name={(isEditingRecipeDetail ? recipeDetailDraft.isPublic : selectedRecipeForView?.is_public)
+                ? 'globe-outline'
+                : 'lock-closed-outline'}
+              size={16}
+              color={palette.accent}
+            />
+            <Text style={styles.recipeDetailInfoText}>
+              {(isEditingRecipeDetail ? recipeDetailDraft.isPublic : selectedRecipeForView?.is_public)
+                ? 'Receta pública'
+                : 'Receta privada'}
+            </Text>
+          </View>
         </View>
 
         {!isEditingRecipeDetail ? (
@@ -2914,6 +2962,33 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     await openRecipeInManualEditForm(importedRecipeId, data?.recipe || null);
   };
 
+  const buildImageImportFailureAlert = ({ statusCode, payloadCode, payloadMessage, canReadImage }) => {
+    const normalizedCode = String(payloadCode || '').toUpperCase();
+    const detailMessage =
+      String(payloadMessage || '').trim() || 'No se pudo completar el analisis de la imagen.';
+    const imageWasReadable =
+      canReadImage === true || statusCode === 422 || normalizedCode === 'IMAGE_READ_NO_RECIPE';
+
+    if (imageWasReadable) {
+      return {
+        title: 'Imagen leida',
+        message: `Se pudo leer la imagen, pero no se detecto una receta.\n\nDetalle: ${detailMessage}`,
+      };
+    }
+
+    if (statusCode === 413 || normalizedCode === 'IMAGE_TOO_LARGE') {
+      return {
+        title: 'No se pudo leer la imagen',
+        message: 'La imagen es demasiado grande. Intenta con una foto mas ligera.',
+      };
+    }
+
+    return {
+      title: 'No se pudo leer la imagen',
+      message: detailMessage,
+    };
+  };
+
   const handleImportRecipeFromImage = async (sourceType) => {
     if (!supabase || !isSupabaseConfigured || !userId) {
       Alert.alert('Importar receta', 'Debes iniciar sesión y configurar Supabase para importar.');
@@ -3003,8 +3078,12 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
         setIsImportingRecipe(false);
         setImageImportProgressText('');
         let detailedMessage = error.message || 'No se pudo importar la receta desde imagen.';
+        let statusCode = 0;
+        let payloadCode = '';
+        let canReadImage = false;
         const contextResponse = error.context;
         if (contextResponse) {
+          statusCode = Number(contextResponse.status || 0);
           try {
             const payload = await contextResponse.clone().json();
             if (typeof payload?.error === 'string' && payload.error) {
@@ -3012,6 +3091,8 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
             } else if (typeof payload?.message === 'string' && payload.message) {
               detailedMessage = payload.message;
             }
+            payloadCode = String(payload?.code || '');
+            canReadImage = Boolean(payload?.can_read_image);
           } catch (_jsonError) {
             try {
               const rawText = await contextResponse.clone().text();
@@ -3024,14 +3105,26 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
           }
         }
 
-        Alert.alert('No se detectó una receta', detailedMessage);
+        const failureAlert = buildImageImportFailureAlert({
+          statusCode,
+          payloadCode,
+          payloadMessage: detailedMessage,
+          canReadImage,
+        });
+        Alert.alert(failureAlert.title, failureAlert.message);
         return;
       }
 
       if (data?.error) {
         setIsImportingRecipe(false);
         setImageImportProgressText('');
-        Alert.alert('No se detectó una receta', String(data.error));
+        const failureAlert = buildImageImportFailureAlert({
+          statusCode: 0,
+          payloadCode: data?.code,
+          payloadMessage: String(data.error),
+          canReadImage: Boolean(data?.can_read_image),
+        });
+        Alert.alert(failureAlert.title, failureAlert.message);
         return;
       }
 
@@ -3044,9 +3137,15 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
       }
 
       setImageImportProgressText('Leyendo Imagen...');
-      await openRecipeInManualEditForm(importedRecipeId, data?.recipe || null);
+      const openedInEditor = await openRecipeInManualEditForm(importedRecipeId, data?.recipe || null);
       setIsImportingRecipe(false);
       setImageImportProgressText('');
+      if (!openedInEditor) {
+        Alert.alert(
+          'Importar receta',
+          'La receta se importo, pero no se pudo abrir el editor. Ve a Recetas y abrela manualmente.'
+        );
+      }
     } catch (unexpectedError) {
       setIsImportingRecipe(false);
       setImageImportProgressText('');
@@ -4581,63 +4680,80 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
 
   const openRecipeInManualEditForm = async (recipeId, importedRecipeFallback = null) => {
     if (!supabase || !isSupabaseConfigured || !userId || !recipeId) {
-      return;
+      return false;
     }
 
-    const { data: fetchedRecipe, error: recipeError } = await supabase
-      .from('recipes')
-      .select(
-        'id, owner_user_id, name, description, main_photo_url, additional_photos, steps, instructions, is_public, source_url'
-      )
-      .eq('id', recipeId)
-      .eq('owner_user_id', userId)
-      .single();
+    try {
+      const { data: fetchedRecipe, error: recipeError } = await supabase
+        .from('recipes')
+        .select(
+          'id, owner_user_id, name, description, main_photo_url, additional_photos, steps, instructions, is_public, source_url'
+        )
+        .eq('id', recipeId)
+        .eq('owner_user_id', userId)
+        .single();
 
-    let recipeData = fetchedRecipe;
-    if (!recipeData && importedRecipeFallback && String(importedRecipeFallback.id) === String(recipeId)) {
-      recipeData = {
-        id: importedRecipeFallback.id,
-        owner_user_id: userId,
-        name: importedRecipeFallback.name || '',
-        description: importedRecipeFallback.description || '',
-        main_photo_url: importedRecipeFallback.main_photo_url || '',
-        additional_photos: importedRecipeFallback.additional_photos || [],
-        steps: importedRecipeFallback.steps || [],
-        instructions: importedRecipeFallback.instructions || '',
-        source_url: importedRecipeFallback.source_url || '',
-        is_public: Boolean(importedRecipeFallback.is_public),
-      };
+      let recipeData = fetchedRecipe;
+      if (!recipeData && importedRecipeFallback && String(importedRecipeFallback.id) === String(recipeId)) {
+        recipeData = {
+          id: importedRecipeFallback.id,
+          owner_user_id: userId,
+          name: importedRecipeFallback.name || '',
+          description: importedRecipeFallback.description || '',
+          main_photo_url: importedRecipeFallback.main_photo_url || '',
+          additional_photos: importedRecipeFallback.additional_photos || [],
+          steps: importedRecipeFallback.steps || [],
+          instructions: importedRecipeFallback.instructions || '',
+          source_url: importedRecipeFallback.source_url || '',
+          is_public: Boolean(importedRecipeFallback.is_public),
+        };
+      }
+
+      if (recipeError && !recipeData) {
+        setImportFeedback('Se importó, pero no se pudo abrir en modo edición.');
+        return false;
+      }
+
+      if (!recipeData?.id) {
+        setImportFeedback('Se importó, pero no se pudo abrir en modo edición.');
+        return false;
+      }
+
+      const refreshedCookbooks = await loadCookbooks({ force: true });
+      const sourceCookbooks = Array.isArray(refreshedCookbooks) ? refreshedCookbooks : ownCookbooks;
+      const recipeFromCookbooks = findRecipeAcrossCookbooks(sourceCookbooks, recipeData.id);
+      const syncedRecipe = recipeFromCookbooks
+        ? {
+            ...recipeData,
+            ...recipeFromCookbooks,
+          }
+        : recipeData;
+      const parentCookbook = sourceCookbooks.find((cookbook) =>
+        (cookbook.recipes || []).some((recipe) => String(recipe.id) === String(syncedRecipe.id))
+      );
+
+      recipeDetailsCacheRef.current[String(syncedRecipe.id)] = syncedRecipe;
+
+      setIsImportUrlModalOpen(false);
+      setImportUrl('');
+      setImportFeedback('');
+      setIsManualRecipeModalOpen(false);
+      setSelectedCookbookForView(parentCookbook || null);
+      setSelectedRecipeForView(syncedRecipe);
+      setRecipeDetailDraft(buildRecipeDetailDraft(syncedRecipe));
+      setRecipeDetailMode('edit');
+      setRecipeDetailFeedback('Receta importada. Ajusta lo necesario y guarda cambios.');
+      return true;
+    } catch (unexpectedError) {
+      const errorMessage =
+        unexpectedError instanceof Error ? unexpectedError.message.toLowerCase() : '';
+      if (errorMessage.includes('quota')) {
+        setImportFeedback('El almacenamiento del navegador esta lleno. Limpia los datos del sitio y reintenta.');
+      } else {
+        setImportFeedback('Se importó, pero no se pudo abrir en modo edición.');
+      }
+      return false;
     }
-
-    if (recipeError && !recipeData) {
-      setImportFeedback('Se importó, pero no se pudo abrir en modo edición.');
-      return;
-    }
-
-    const refreshedCookbooks = await loadCookbooks({ force: true });
-    const sourceCookbooks = Array.isArray(refreshedCookbooks) ? refreshedCookbooks : ownCookbooks;
-    const recipeFromCookbooks = findRecipeAcrossCookbooks(sourceCookbooks, recipeData.id);
-    const syncedRecipe = recipeFromCookbooks
-      ? {
-          ...recipeData,
-          ...recipeFromCookbooks,
-        }
-      : recipeData;
-    const parentCookbook = sourceCookbooks.find((cookbook) =>
-      (cookbook.recipes || []).some((recipe) => String(recipe.id) === String(syncedRecipe.id))
-    );
-
-    recipeDetailsCacheRef.current[String(syncedRecipe.id)] = syncedRecipe;
-
-    setIsImportUrlModalOpen(false);
-    setImportUrl('');
-    setImportFeedback('');
-    setIsManualRecipeModalOpen(false);
-    setSelectedCookbookForView(parentCookbook || null);
-    setSelectedRecipeForView(syncedRecipe);
-    setRecipeDetailDraft(buildRecipeDetailDraft(syncedRecipe));
-    setRecipeDetailMode('edit');
-    setRecipeDetailFeedback('Receta importada. Ajusta lo necesario y guarda cambios.');
   };
 
   const handleImportRecipeFromUrl = async () => {
@@ -4855,7 +4971,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
                 <Ionicons
                   name={tab.icon}
                   size={20}
-                  color={isActive ? palette.accent : '#D9F4EE'}
+                  color={isActive ? palette.accent : '#8AA09B'}
                 />
                 <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{tab.label}</Text>
               </TouchableOpacity>
@@ -5997,7 +6113,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.xl,
-    paddingBottom: spacing.md,
+    paddingBottom: 148,
   },
   title: {
     color: palette.accent,
@@ -6502,25 +6618,36 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   bottomBar: {
+    position: 'absolute',
+    left: 14,
+    right: 14,
+    bottom: 14,
     flexDirection: 'row',
-    backgroundColor: palette.accent,
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: '#D9E2E7',
     justifyContent: 'space-between',
-    alignItems: 'flex-end',
-    paddingHorizontal: spacing.sm,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.md,
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    paddingBottom: 10,
     overflow: 'visible',
+    shadowColor: '#0B1F1A',
+    shadowOpacity: 0.14,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 14,
+    zIndex: 20,
   },
   bottomFabGap: {
-    width: 74,
+    width: 80,
   },
   fabButton: {
     position: 'absolute',
     left: '50%',
     marginLeft: -36,
-    bottom: 52,
+    bottom: 44,
     width: 72,
     height: 72,
     borderRadius: 36,
@@ -6528,8 +6655,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 5,
-    borderColor: palette.background,
-    zIndex: 10,
+    borderColor: '#FFFFFF',
+    zIndex: 30,
     shadowColor: '#000',
     shadowOpacity: 0.18,
     shadowRadius: 12,
@@ -7885,14 +8012,14 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: spacing.sm,
-    borderRadius: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
   },
   tabButtonActive: {
-    backgroundColor: palette.background,
+    backgroundColor: '#ECF4F2',
   },
   tabLabel: {
-    color: '#D9F4EE',
+    color: '#7D918D',
     fontSize: 12,
     marginTop: 4,
     fontFamily: fonts.medium,

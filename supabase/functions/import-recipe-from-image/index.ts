@@ -29,6 +29,22 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
   });
 }
 
+function errorResponse(params: {
+  status: number;
+  code: string;
+  error: string;
+  canReadImage?: boolean;
+}) {
+  return jsonResponse(
+    {
+      error: params.error,
+      code: params.code,
+      can_read_image: Boolean(params.canReadImage),
+    },
+    params.status
+  );
+}
+
 function normalizeString(value: unknown): string {
   if (typeof value !== 'string') {
     return '';
@@ -247,15 +263,30 @@ Deno.serve(async (req) => {
     const sourceType = (normalizeString(body.source_type).toLowerCase() || 'upload') as ImageSourceType;
 
     if (!imageBase64) {
-      return jsonResponse({ error: 'image_base64 is required.' }, 400);
+      return errorResponse({
+        status: 400,
+        code: 'IMAGE_BASE64_REQUIRED',
+        error: 'image_base64 is required.',
+        canReadImage: false,
+      });
     }
 
     if (imageBase64.length > MAX_IMAGE_BASE64_CHARS) {
-      return jsonResponse({ error: 'La imagen es demasiado grande. Intenta con una foto mas ligera.' }, 413);
+      return errorResponse({
+        status: 413,
+        code: 'IMAGE_TOO_LARGE',
+        error: 'La imagen es demasiado grande. Intenta con una foto mas ligera.',
+        canReadImage: false,
+      });
     }
 
     if (!mimeType.startsWith('image/')) {
-      return jsonResponse({ error: 'mime_type debe ser una imagen valida.' }, 400);
+      return errorResponse({
+        status: 400,
+        code: 'IMAGE_INVALID_MIME',
+        error: 'mime_type debe ser una imagen valida.',
+        canReadImage: false,
+      });
     }
 
     const extraction = await extractRecipeFromImage({
@@ -265,12 +296,12 @@ Deno.serve(async (req) => {
 
     const hasCoreData = extraction.name && (extraction.ingredients.length > 0 || extraction.steps.length > 0);
     if (!extraction.isRecipe || !hasCoreData) {
-      return jsonResponse(
-        {
-          error: buildNoRecipeMessage(sourceType, extraction.reason),
-        },
-        422
-      );
+      return errorResponse({
+        status: 422,
+        code: 'IMAGE_READ_NO_RECIPE',
+        error: buildNoRecipeMessage(sourceType, extraction.reason),
+        canReadImage: true,
+      });
     }
 
     const description = buildDescription(extraction.description, extraction.ingredients);
@@ -293,7 +324,12 @@ Deno.serve(async (req) => {
       .single();
 
     if (insertError) {
-      return jsonResponse({ error: insertError.message }, 500);
+      return errorResponse({
+        status: 500,
+        code: 'RECIPE_INSERT_FAILED',
+        error: insertError.message,
+        canReadImage: true,
+      });
     }
 
     return jsonResponse({
@@ -303,6 +339,11 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unexpected image import error.';
-    return jsonResponse({ error: message }, 500);
+    return errorResponse({
+      status: 500,
+      code: 'IMAGE_PROCESSING_FAILED',
+      error: message,
+      canReadImage: false,
+    });
   }
 });

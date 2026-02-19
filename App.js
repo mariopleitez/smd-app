@@ -64,6 +64,19 @@ const composeStarterRecipeDescription = (description, ingredients) => {
 };
 
 const getStarterLocalImageUrl = (index) => `/receta${index + 1}.png`;
+
+const isStorageQuotaError = (error) => {
+  const errorName = String(error?.name || '').toLowerCase();
+  const errorMessage = String(error?.message || '').toLowerCase();
+  const errorCode = Number(error?.code);
+  return (
+    errorName.includes('quota') ||
+    errorMessage.includes('quota') ||
+    errorCode === 22 ||
+    errorCode === 1014
+  );
+};
+
 const normalizeStarterSteps = (recipe) => {
   const fromSteps = Array.isArray(recipe?.steps)
     ? recipe.steps.map((step) => String(step || '').trim()).filter((step) => step.length > 0)
@@ -295,9 +308,25 @@ export default function App() {
       };
     }
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      return { ok: false, message: error.message };
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        return { ok: false, message: error.message };
+      }
+    } catch (unexpectedError) {
+      if (isStorageQuotaError(unexpectedError)) {
+        return {
+          ok: false,
+          message: 'El almacenamiento del navegador esta lleno. Limpia los datos del sitio y vuelve a intentar.',
+        };
+      }
+      return {
+        ok: false,
+        message:
+          unexpectedError instanceof Error
+            ? unexpectedError.message
+            : 'No fue posible iniciar sesion por un error inesperado.',
+      };
     }
 
     return { ok: true };

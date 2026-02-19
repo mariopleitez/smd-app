@@ -19,11 +19,19 @@ export default function LoginScreen({ onLogin, onGoRegistro, onBack, supabaseCon
 
     setIsLoading(true);
     setFeedback('');
-    const result = await onLogin({ email: safeEmail, password });
-    setIsLoading(false);
-
-    if (!result.ok) {
-      setFeedback(result.message || 'No fue posible iniciar sesión.');
+    try {
+      const result = await onLogin({ email: safeEmail, password });
+      if (!result?.ok) {
+        setFeedback(result?.message || 'No fue posible iniciar sesión.');
+      }
+    } catch (unexpectedError) {
+      setFeedback(
+        unexpectedError instanceof Error
+          ? unexpectedError.message
+          : 'No fue posible iniciar sesión.'
+      );
+    } finally {
+      setIsLoading(false);
     }
   };
 
