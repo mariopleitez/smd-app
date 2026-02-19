@@ -139,6 +139,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
   const [cookbookRenameInput, setCookbookRenameInput] = useState('');
   const [isCookbookToolsOpen, setIsCookbookToolsOpen] = useState(false);
   const [isMoveRecipesPickerOpen, setIsMoveRecipesPickerOpen] = useState(false);
+  const [isCookbookDeleteConfirmOpen, setIsCookbookDeleteConfirmOpen] = useState(false);
   const [recipeSearchScope, setRecipeSearchScope] = useState('mine');
   const [isRecipeSearchScopeMenuOpen, setIsRecipeSearchScopeMenuOpen] = useState(false);
   const [recipeSearchResults, setRecipeSearchResults] = useState([]);
@@ -2287,6 +2288,28 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
                   </View>
                   <Text style={styles.cookbookToolLabel}>Eliminar</Text>
                 </TouchableOpacity>
+
+                {!isUnassignedCookbookSelected ? (
+                  <TouchableOpacity
+                    style={[styles.cookbookToolButton, isMutatingCookbookView && styles.buttonDisabled]}
+                    onPress={() => {
+                      setIsCookbookToolsOpen(false);
+                      setIsRenamingCookbook(false);
+                      setCookbookRecipeAction(null);
+                      setSelectedCookbookRecipeIds([]);
+                      setCookbookViewFeedback('');
+                      setIsCookbookDeleteConfirmOpen(true);
+                    }}
+                    disabled={isMutatingCookbookView}
+                  >
+                    <View style={[styles.cookbookToolIconWrap, styles.cookbookToolIconWrapDanger]}>
+                      <Ionicons name="folder-open-outline" size={18} color="#DC2626" />
+                    </View>
+                    <Text style={[styles.cookbookToolLabel, styles.cookbookToolLabelDanger]}>
+                      Eliminar recetario
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
               </View>
             ) : null}
           </View>
@@ -3096,6 +3119,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     setCookbookRenameInput('');
     setIsCookbookToolsOpen(false);
     setIsMoveRecipesPickerOpen(false);
+    setIsCookbookDeleteConfirmOpen(false);
   };
 
   const refreshCookbooksAndSelectedCookbook = async (cookbookIdToKeep) => {
@@ -3137,6 +3161,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     setCookbookRenameInput(cookbook?.name || '');
     setIsCookbookToolsOpen(false);
     setIsMoveRecipesPickerOpen(false);
+    setIsCookbookDeleteConfirmOpen(false);
   };
 
   const closeRecipeDetailView = () => {
@@ -3487,6 +3512,33 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     setCookbookViewFeedback('Recetario renombrado correctamente.');
     setIsRenamingCookbook(false);
     setIsCookbookToolsOpen(false);
+  };
+
+  const handleDeleteSelectedCookbook = async () => {
+    if (!supabase || !selectedCookbookForView || !canManageSelectedCookbook || isUnassignedCookbookSelected || !userId) {
+      return;
+    }
+
+    setIsMutatingCookbookView(true);
+    setCookbookViewFeedback('');
+    const { error } = await supabase
+      .from('cookbooks')
+      .delete()
+      .eq('id', selectedCookbookForView.id)
+      .eq('owner_user_id', userId);
+    setIsMutatingCookbookView(false);
+
+    if (error) {
+      setCookbookViewFeedback('No se pudo eliminar el recetario.');
+      return;
+    }
+
+    setIsCookbookDeleteConfirmOpen(false);
+    closeCookbookRecipesView();
+    const refreshedCookbooks = await loadCookbooks({ force: true });
+    if (Array.isArray(refreshedCookbooks)) {
+      setCookbookFeedback('Recetario eliminado. Las recetas permanecen en Sin Recetario.');
+    }
   };
 
   const handleRemoveRecipesFromCookbook = async () => {
@@ -4980,6 +5032,50 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
               >
                 <Text style={styles.importButtonPrimaryText}>
                   {isDeletingRecipe ? 'Borrando...' : 'Borrar'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={isCookbookDeleteConfirmOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setIsCookbookDeleteConfirmOpen(false)}
+      >
+        <View style={styles.cameraImportOverlay}>
+          <Pressable
+            style={styles.cameraImportBackdrop}
+            onPress={() => setIsCookbookDeleteConfirmOpen(false)}
+          />
+          <View style={styles.recipeMoreMenuPopup}>
+            <Text style={styles.recipeDeleteConfirmTitle}>Eliminar recetario</Text>
+            <Text style={styles.recipeDeleteConfirmText}>
+              ¿Deseas eliminar este recetario? Las recetas no se borrarán y pasarán a Sin Recetario.
+            </Text>
+            <View style={styles.recipeDeleteConfirmActions}>
+              <TouchableOpacity
+                style={styles.importButtonSecondary}
+                onPress={() => setIsCookbookDeleteConfirmOpen(false)}
+                disabled={isMutatingCookbookView}
+              >
+                <Text style={styles.importButtonSecondaryText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.importButtonPrimary,
+                  styles.recipeDeleteConfirmButton,
+                  isMutatingCookbookView && styles.buttonDisabled,
+                ]}
+                onPress={() => {
+                  void handleDeleteSelectedCookbook();
+                }}
+                disabled={isMutatingCookbookView}
+              >
+                <Text style={styles.importButtonPrimaryText}>
+                  {isMutatingCookbookView ? 'Eliminando...' : 'Eliminar recetario'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -6927,11 +7023,14 @@ const styles = StyleSheet.create({
   },
   cookbookToolsRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
+    flexWrap: 'nowrap',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 6,
   },
   cookbookToolButton: {
-    width: '22%',
+    flex: 1,
+    minWidth: 0,
     alignItems: 'center',
   },
   cookbookToolIconWrap: {
@@ -6948,8 +7047,16 @@ const styles = StyleSheet.create({
   cookbookToolLabel: {
     color: palette.accent,
     fontFamily: fonts.medium,
-    fontSize: 11,
+    fontSize: 10,
+    lineHeight: 12,
     textAlign: 'center',
+  },
+  cookbookToolIconWrapDanger: {
+    borderColor: '#F2D1D1',
+    backgroundColor: '#FFF5F5',
+  },
+  cookbookToolLabelDanger: {
+    color: '#B42318',
   },
   cookbookSelectionPanelCompact: {
     marginBottom: spacing.sm,
