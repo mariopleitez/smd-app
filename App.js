@@ -311,6 +311,7 @@ export default function App() {
             userEmail={session?.user?.email}
             userId={session?.user?.id}
             userName={session?.user?.user_metadata?.full_name}
+            userAvatar={session?.user?.user_metadata?.avatar_url}
           />
         );
       default:

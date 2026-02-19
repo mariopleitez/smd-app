@@ -1,16 +1,71 @@
 # SaveMyDish (`smd-app`)
 
 SaveMyDish is an Expo + React Native app backed by Supabase.  
-Current scope: auth, recipe management, cookbooks, shopping list, and weekly meal planning.
+Current scope: auth, recipe management, private cookbooks, shopping list, and weekly meal planning.
 
 ## Features
 
 - Email/password auth with Supabase (`signUp`, `signInWithPassword`, `signOut`).
-- Cookbook management (`cookbooks` and `cookbook_recipes`).
-- Recipe management (`recipes`), including manual creation and editing.
-- URL-based import through the `import-recipe-from-url` Supabase Edge Function.
-- Shopping list per user (`shopping_items`).
+- Cookbook management (`cookbooks` and `cookbook_recipes`) with private visibility per owner.
+- Recipe management (`recipes`): create, edit, delete, public/private toggle, source URL, step photos, and step reorder.
+- Recipe import from:
+  - URL (`import-recipe-from-url`)
+  - Pasted text (`import-recipe-from-text`)
+  - Image/OCR (`import-recipe-from-image`)
+- Shopping list per user (`shopping_items`), including recipe-origin metadata.
 - Weekly meal plan per user/day (`meal_plans`) with `breakfast_recipe_id`, `snack_recipe_id`, `lunch_recipe_id`, and `dinner_recipe_id`.
+- Per-user recipe feedback (`recipe_user_feedback`): cooked toggle, rating (0-5), and notes.
+
+## Screens and Functions (Main App)
+
+The main app is orchestrated by `screens/PrincipalScreen.js`, with tab views split into:
+
+- `screens/main-tabs/RecetasTabScreen.js`
+- `screens/main-tabs/ListaTabScreen.js`
+- `screens/main-tabs/PlanTabScreen.js`
+- `screens/main-tabs/PerfilTabScreen.js`
+
+### `Recetas`
+
+- Private cookbook list and cookbook cards with prioritized image previews.
+- Search with scope filters:
+  - `Mis recetas`
+  - `SaveMyDish` (public recipes)
+  - `Todo` (own + public)
+- Recipe detail view:
+  - View/edit modes with cookbook-style visual card.
+  - Public/private toggle.
+  - Source link display (`source_url`) when available.
+  - “Cooked”, rating stars, and personal notes persisted per user.
+  - Step-level photo support (`additional_photos`) and step reorder.
+  - Add to cookbook, add ingredients to shopping list, add recipe to meal plan.
+  - More menu (`...`) with export PDF and delete.
+- Recipe create/import sheet:
+  - Browser URL import
+  - Camera/image OCR import
+  - Paste-text import
+  - Manual creation/edit form
+
+### `Lista`
+
+- Add/check/uncheck list items.
+- Clear completed / clear all.
+- Recipe-origin labels on shopping items when available.
+
+### `Plan`
+
+- Week navigation.
+- Per-day meal slots (breakfast/snack/lunch/dinner).
+- Assign/remove recipes from slots.
+- “Add to plan” form:
+  - Recipe picker with recent recipes and search.
+  - Date modes: `Hoy`, `Mañana`, `Seleccionar cuándo` (future-only validation).
+  - Meal type selector.
+
+### `Perfil`
+
+- Shows signed-in user name/email.
+- Logout action.
 
 ## Tech Stack
 
@@ -24,9 +79,12 @@ Current scope: auth, recipe management, cookbooks, shopping list, and weekly mea
 
 - `App.js`: root navigation/auth flow.
 - `screens/`: app screens (`Login`, `Registro`, `Principal`, etc.).
+- `screens/main-tabs/`: tab components rendered by `PrincipalScreen`.
 - `lib/supabase.js`: Supabase client setup.
 - `supabase/sql/`: SQL migrations to create tables, indexes, triggers, and RLS policies.
-- `supabase/functions/import-recipe-from-url/`: Edge Function for recipe import from URLs.
+- `supabase/functions/import-recipe-from-url/`: import recipe from webpage URL.
+- `supabase/functions/import-recipe-from-text/`: import recipe from pasted text.
+- `supabase/functions/import-recipe-from-image/`: import recipe from image/OCR.
 
 ## Prerequisites
 
@@ -99,6 +157,10 @@ Run SQL files in this order:
 1. `supabase/sql/001_shopping_items.sql`
 2. `supabase/sql/002_cookbooks_and_recipes.sql`
 3. `supabase/sql/003_meal_plans.sql`
+4. `supabase/sql/004_cookbooks_private_policies.sql`
+5. `supabase/sql/005_fix_unsplash_recipe_image_urls.sql`
+6. `supabase/sql/006_add_recipe_source_url.sql`
+7. `supabase/sql/007_recipe_user_feedback.sql`
 
 These scripts create tables, triggers, indexes, grants, and row-level-security policies.
 
@@ -108,6 +170,8 @@ Deploy:
 
 ```bash
 supabase functions deploy import-recipe-from-url --project-ref <your-project-ref>
+supabase functions deploy import-recipe-from-text --project-ref <your-project-ref>
+supabase functions deploy import-recipe-from-image --project-ref <your-project-ref>
 ```
 
 Optional AI-assisted extraction:
@@ -119,8 +183,11 @@ supabase secrets set OPENAI_RECIPE_MODEL=gpt-4.1-mini --project-ref <your-projec
 
 Notes:
 
-- `OPENAI_API_KEY` is optional. Without it, the function still attempts structured HTML extraction.
-- The app calls this function with `supabase.functions.invoke('import-recipe-from-url', ...)`.
+- `OPENAI_API_KEY` is optional. Without it, extraction may be reduced depending on source quality.
+- The app invokes:
+  - `supabase.functions.invoke('import-recipe-from-url', ...)`
+  - `supabase.functions.invoke('import-recipe-from-text', ...)`
+  - `supabase.functions.invoke('import-recipe-from-image', ...)`
 
 ## Security Model
 

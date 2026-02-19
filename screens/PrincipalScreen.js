@@ -32,12 +32,12 @@ import ListaTabScreen from './main-tabs/ListaTabScreen';
 import PlanTabScreen from './main-tabs/PlanTabScreen';
 import PerfilTabScreen from './main-tabs/PerfilTabScreen';
 
-export default function PrincipalScreen({ onLogout, userEmail, userId, userName }) {
+export default function PrincipalScreen({ onLogout, userEmail, userId, userName, userAvatar }) {
   const tabs = useMemo(
     () => [
       { key: 'recetas', label: 'Recetas', icon: 'restaurant-outline' },
-      { key: 'lista', label: 'Lista', icon: 'basket-outline' },
       { key: 'plan', label: 'Plan', icon: 'calendar-outline' },
+      { key: 'lista', label: 'Lista', icon: 'basket-outline' },
       { key: 'perfil', label: 'Perfil', icon: 'person-outline' },
     ],
     []
@@ -99,6 +99,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
   const [isPlanAssignModalOpen, setIsPlanAssignModalOpen] = useState(false);
   const [planAssignmentRecipe, setPlanAssignmentRecipe] = useState(null);
   const [planAssignDate, setPlanAssignDate] = useState('');
+  const [planAssignDateMode, setPlanAssignDateMode] = useState('tomorrow');
   const [planAssignMealType, setPlanAssignMealType] = useState('almuerzo');
   const [isSavingPlanAssignment, setIsSavingPlanAssignment] = useState(false);
   const [planAssignFeedback, setPlanAssignFeedback] = useState('');
@@ -119,6 +120,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
   const [isMutatingPlan, setIsMutatingPlan] = useState(false);
   const [planRecipeOptions, setPlanRecipeOptions] = useState([]);
   const [selectedPlanRecipeId, setSelectedPlanRecipeId] = useState('');
+  const [planRecipeSearchQuery, setPlanRecipeSearchQuery] = useState('');
   const [isPlanRecipeOptionsLoading, setIsPlanRecipeOptionsLoading] = useState(false);
   const [recipeDetailDraft, setRecipeDetailDraft] = useState({
     title: '',
@@ -914,6 +916,17 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     ],
     []
   );
+  const filteredPlanRecipeOptions = useMemo(() => {
+    const query = planRecipeSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return planRecipeOptions;
+    }
+    return planRecipeOptions.filter((recipe) =>
+      String(recipe?.name || '')
+        .toLowerCase()
+        .includes(query)
+    );
+  }, [planRecipeOptions, planRecipeSearchQuery]);
 
   const parseIsoDate = (isoDate) => {
     const [year, month, day] = String(isoDate || '')
@@ -1468,6 +1481,25 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
   };
 
   const handleDeleteSelectedRecipe = async () => {
+  const handleShareRecipeLink = async (recipeNameValue, onErrorMessage) => {
+    const recipeName = String(recipeNameValue || '').trim() || 'Receta';
+    const appUrl = 'https://www.savemydish.com';
+    const message = `Hey! Mira esta receta: ${recipeName}. Quiero compartírtela en SaveMyDish, sé que te va a encantar.\n\n${appUrl}`;
+
+    try {
+      await Share.share({
+        title: 'SaveMyDish',
+        message,
+        url: appUrl,
+      });
+    } catch (_error) {
+      if (typeof onErrorMessage === 'function') {
+        onErrorMessage('No se pudo abrir compartir en este dispositivo.');
+      }
+    }
+  };
+
+  const handleDeleteSelectedRecipe = async () => {
     if (!supabase || !isSupabaseConfigured || !selectedRecipeForView?.id || !canEditSelectedRecipe) {
       return;
     }
@@ -1891,14 +1923,19 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
               </View>
               <Text style={styles.manualQuickActionText}>Lista</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.manualQuickAction}
-              onPress={() => setRecipeDetailFeedback('Compartir estará disponible pronto.')}
-            >
-              <View style={styles.manualQuickActionIcon}>
-                <Ionicons name="share-social-outline" size={20} color={palette.accent} />
-              </View>
-              <Text style={styles.manualQuickActionText}>Compartir</Text>
+              <TouchableOpacity
+                style={styles.manualQuickAction}
+                onPress={() => {
+                  void handleShareRecipeLink(
+                    selectedRecipeForView?.name || recipeDetailDraft?.title || 'Receta',
+                    setRecipeDetailFeedback
+                  );
+                }}
+              >
+                <View style={styles.manualQuickActionIcon}>
+                  <Ionicons name="share-social-outline" size={20} color={palette.accent} />
+                </View>
+                <Text style={styles.manualQuickActionText}>Compartir</Text>
             </TouchableOpacity>
           </View>
 
@@ -2608,262 +2645,6 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
       </View>
     );
   };
-
-  const renderListaView = () => (
-    <View>
-      <Text style={styles.title}>Lista de Compras</Text>
-      <Text style={styles.body}>Agrega rápido lo del súper y márcalo cuando esté listo.</Text>
-
-      {!isSupabaseConfigured ? (
-        <View style={styles.warningCard}>
-          <Text style={styles.warningText}>
-            Configura `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY` para usar la lista.
-          </Text>
-        </View>
-      ) : null}
-
-      <View style={styles.inputRow}>
-        <TextInput
-          style={styles.input}
-          placeholder="Ej. Tomates, Leche, Arroz..."
-          placeholderTextColor={palette.mutedText}
-          value={shoppingInput}
-          onChangeText={setShoppingInput}
-          editable={!isMutatingList}
-          onSubmitEditing={handleAddItem}
-          returnKeyType="done"
-        />
-        <TouchableOpacity
-          style={[styles.addButton, (isMutatingList || !shoppingInput.trim()) && styles.buttonDisabled]}
-          onPress={handleAddItem}
-          disabled={isMutatingList || !shoppingInput.trim()}
-        >
-          <Ionicons name="add" size={20} color={palette.card} />
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.listActions}>
-        <TouchableOpacity
-          style={[styles.secondaryAction, (!canClearCompleted || isMutatingList) && styles.buttonDisabled]}
-          onPress={handleClearCompleted}
-          disabled={!canClearCompleted || isMutatingList}
-        >
-          <Text style={styles.secondaryActionText}>Borrar completado</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.secondaryAction, (!canClearAll || isMutatingList) && styles.buttonDisabled]}
-          onPress={handleClearAll}
-          disabled={!canClearAll || isMutatingList}
-        >
-          <Text style={styles.secondaryActionText}>Borrar todo</Text>
-        </TouchableOpacity>
-      </View>
-
-      {listFeedback ? <Text style={styles.feedback}>{listFeedback}</Text> : null}
-
-      {isListLoading ? (
-        <View style={styles.loadingWrap}>
-          <ActivityIndicator size="small" color={palette.accent} />
-        </View>
-      ) : (
-        <View style={styles.listCard}>
-          {shoppingItems.length === 0 ? (
-            <Text style={styles.emptyText}>Todavía no tienes items en tu lista.</Text>
-          ) : (
-            shoppingItems.map((item) => {
-              const { displayName, sourceRecipeName } = decodeShoppingItemName(item.name);
-
-              return (
-                <TouchableOpacity
-                  key={item.id}
-                  style={styles.listItem}
-                  onPress={() => handleToggleItem(item)}
-                  disabled={isMutatingList}
-                >
-                  <View style={styles.listItemContent}>
-                    <Text style={[styles.itemText, item.is_completed && styles.itemTextCompleted]}>
-                      {displayName}
-                    </Text>
-                    {sourceRecipeName ? (
-                      <Text
-                        style={[
-                          styles.itemSourceText,
-                          item.is_completed && styles.itemSourceTextCompleted,
-                        ]}
-                      >
-                        de {sourceRecipeName}
-                      </Text>
-                    ) : null}
-                  </View>
-                  <Ionicons
-                    name={item.is_completed ? 'checkmark-circle' : 'ellipse-outline'}
-                    size={22}
-                    color={item.is_completed ? '#16A34A' : palette.accent}
-                  />
-                </TouchableOpacity>
-              );
-            })
-          )}
-        </View>
-      )}
-    </View>
-  );
-
-  const renderPlanView = () => {
-    const weekdayFormatter = new Intl.DateTimeFormat('es-ES', { weekday: 'long' });
-    const dayNumberFormatter = new Intl.DateTimeFormat('es-ES', { day: 'numeric' });
-
-    return (
-      <View>
-        <Text style={styles.title}>Plan de comidas</Text>
-
-        <View style={styles.planWeekHeader}>
-          <TouchableOpacity
-            style={styles.planWeekArrowButton}
-            onPress={() => shiftPlanWeek(-1)}
-            disabled={isPlanLoading || isMutatingPlan}
-          >
-            <Ionicons name="chevron-back" size={20} color={palette.card} />
-          </TouchableOpacity>
-          <Text style={styles.planWeekRangeText}>{formattedPlanWeekRange}</Text>
-          <TouchableOpacity
-            style={styles.planWeekArrowButton}
-            onPress={() => shiftPlanWeek(1)}
-            disabled={isPlanLoading || isMutatingPlan}
-          >
-            <Ionicons name="chevron-forward" size={20} color={palette.card} />
-          </TouchableOpacity>
-        </View>
-
-        {planFeedback ? <Text style={styles.planFeedback}>{planFeedback}</Text> : null}
-
-        {isPlanLoading ? (
-          <View style={styles.loadingWrap}>
-            <ActivityIndicator size="small" color={palette.accent} />
-          </View>
-        ) : (
-          <View style={styles.planDaysList}>
-            {planWeekDays.map((dayItem) => {
-              const weekdayRaw = dayItem.dateObject
-                ? weekdayFormatter.format(dayItem.dateObject)
-                : dayItem.isoDate;
-              const weekdayLabel = `${weekdayRaw.charAt(0).toUpperCase()}${weekdayRaw.slice(1)} ${
-                dayItem.dateObject ? dayNumberFormatter.format(dayItem.dateObject) : ''
-              }`.trim();
-              const mealSlots = [
-                {
-                  key: 'desayuno',
-                  label: 'Desayuno',
-                  recipe: dayItem.breakfastRecipe,
-                },
-                {
-                  key: 'snack',
-                  label: 'Snack',
-                  recipe: dayItem.snackRecipe,
-                },
-                {
-                  key: 'almuerzo',
-                  label: 'Almuerzo',
-                  recipe: dayItem.lunchRecipe,
-                },
-                {
-                  key: 'cena',
-                  label: 'Cena',
-                  recipe: dayItem.dinnerRecipe,
-                },
-              ];
-              const hasAtLeastOneRecipe = mealSlots.some((slot) => Boolean(slot.recipe));
-
-              return (
-                <View key={`plan-day-${dayItem.isoDate}`} style={styles.planDayBlock}>
-                  <View style={styles.planDayHeader}>
-                    <Text style={styles.planDayTitle}>{weekdayLabel}</Text>
-                    <TouchableOpacity
-                      style={styles.planDayAddButton}
-                      onPress={() => handleOpenPlanAssignForDay(dayItem.isoDate)}
-                      disabled={isMutatingPlan}
-                    >
-                      <Ionicons name="add" size={18} color={palette.card} />
-                    </TouchableOpacity>
-                  </View>
-
-                  {hasAtLeastOneRecipe ? (
-                    <View style={styles.planMealPreviewRow}>
-                      {mealSlots.map((slot) => {
-                        const hasRecipe = Boolean(slot.recipe);
-
-                        return (
-                          <View key={`meal-slot-${dayItem.isoDate}-${slot.key}`} style={styles.planMealSlotWrap}>
-                            <TouchableOpacity
-                              style={styles.planMealSlot}
-                              onPress={() => {
-                                if (hasRecipe) {
-                                  handleOpenPlanRecipeDetail(slot.recipe.id);
-                                  return;
-                                }
-
-                                handleOpenPlanAssignForDayMeal(dayItem.isoDate, slot.key);
-                              }}
-                              disabled={isMutatingPlan}
-                            >
-                              {slot.recipe?.main_photo_url ? (
-                                <Image
-                                  source={{ uri: slot.recipe.main_photo_url }}
-                                  style={styles.planMealSlotImage}
-                                  resizeMode="cover"
-                                />
-                              ) : (
-                                <View style={styles.planMealSlotPlaceholder}>
-                                  <Ionicons name="restaurant-outline" size={14} color="#7A8A99" />
-                                  <Text style={styles.planMealSlotLabel}>{slot.label}</Text>
-                                </View>
-                              )}
-                            </TouchableOpacity>
-
-                            {hasRecipe ? (
-                              <TouchableOpacity
-                                style={[
-                                  styles.planMealRemoveButton,
-                                  isMutatingPlan && styles.buttonDisabled,
-                                ]}
-                                onPress={() => handleRemoveRecipeFromPlanSlot(dayItem.isoDate, slot.key)}
-                                disabled={isMutatingPlan}
-                              >
-                                <Ionicons name="close" size={12} color={palette.card} />
-                              </TouchableOpacity>
-                            ) : null}
-                          </View>
-                        );
-                      })}
-                    </View>
-                  ) : (
-                    <TouchableOpacity
-                      style={styles.planDayEmptyPill}
-                      onPress={() => handleOpenPlanAssignForDay(dayItem.isoDate)}
-                      disabled={isMutatingPlan}
-                    >
-                      <Text style={styles.planDayEmptyText}>Aún no hay recetas</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              );
-            })}
-          </View>
-        )}
-      </View>
-    );
-  };
-
-  const renderGeneralView = (title, body) => (
-    <View>
-      <Text style={styles.title}>{title}</Text>
-      <Text style={styles.body}>{body}</Text>
-      <View style={styles.placeholderCard}>
-        <Text style={styles.placeholderTitle}>Contenido</Text>
-        <Text style={styles.placeholderBody}>Placeholder para modulo de {title}.</Text>
-      </View>
-    </View>
-  );
 
   const openCreateRecipeSheet = () => {
     setIsCreateRecipeSheetOpen(true);
@@ -3911,6 +3692,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
   };
 
   const getTodayDateString = () => toIsoDate(new Date());
+  const getTomorrowDateString = () => addDaysToIsoDate(getTodayDateString(), 1);
 
   const closePlanAssignModal = () => {
     if (isSavingPlanAssignment) {
@@ -3920,8 +3702,10 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     setIsPlanAssignModalOpen(false);
     setPlanAssignmentRecipe(null);
     setPlanAssignDate('');
+    setPlanAssignDateMode('tomorrow');
     setPlanAssignMealType('almuerzo');
     setPlanAssignFeedback('');
+    setPlanRecipeSearchQuery('');
     setSelectedPlanRecipeId('');
   };
 
@@ -3930,21 +3714,32 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
       return;
     }
 
-    const selectedDate = dateOverride || getTodayDateString();
+    const todayIso = getTodayDateString();
+    const tomorrowIso = getTomorrowDateString();
+    const incomingDate = dateOverride || tomorrowIso;
+    const selectedDate = incomingDate <= todayIso ? tomorrowIso : incomingDate;
+    const selectedDateMode =
+      selectedDate === todayIso
+        ? 'today'
+        : selectedDate === tomorrowIso
+        ? 'tomorrow'
+        : 'custom';
     setPlanAssignDate(selectedDate);
+    setPlanAssignDateMode(selectedDateMode);
     setPlanAssignMealType(mealTypeOverride);
     setPlanAssignFeedback('');
+    setPlanRecipeSearchQuery('');
     setSelectedPlanRecipeId('');
+    const recipes = await loadPlanRecipeOptions();
 
     if (recipe?.id) {
       setPlanAssignmentRecipe({
         id: recipe.id,
         name: recipe.name || 'Receta',
       });
-      setSelectedPlanRecipeId(String(recipe.id));
+      setSelectedPlanRecipeId(String(recipe.id || recipes?.[0]?.id || ''));
     } else {
       setPlanAssignmentRecipe(null);
-      const recipes = await loadPlanRecipeOptions();
       if (recipes.length > 0) {
         setSelectedPlanRecipeId(String(recipes[0].id));
       }
@@ -3982,6 +3777,51 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
 
   const handleOpenPlanAssignForDayMeal = async (isoDate, mealType) => {
     await openPlanAssignModalForRecipe(null, isoDate, mealType);
+  };
+
+  const handleSelectPlanAssignDateMode = (mode) => {
+    const todayIso = getTodayDateString();
+    const tomorrowIso = getTomorrowDateString();
+
+    setPlanAssignDateMode(mode);
+    if (mode === 'today') {
+      setPlanAssignDate(todayIso);
+      setPlanAssignFeedback('La fecha debe ser futura. Hoy no es válido.');
+      return;
+    }
+
+    if (mode === 'tomorrow') {
+      setPlanAssignDate(tomorrowIso);
+      setPlanAssignFeedback('');
+      return;
+    }
+
+    if (!planAssignDate.trim()) {
+      setPlanAssignDate(tomorrowIso);
+    }
+    setPlanAssignFeedback('');
+  };
+
+  const planAssignCustomDateOptions = useMemo(() => {
+    const todayIso = getTodayDateString();
+    return Array.from({ length: 45 }, (_, index) => addDaysToIsoDate(todayIso, index + 1));
+  }, [planWeekStartIso]);
+
+  const formatPlanAssignDateChipLabel = (isoDate) => {
+    const dateObject = parseIsoDate(isoDate);
+    if (!dateObject) {
+      return isoDate;
+    }
+    try {
+      const weekday = new Intl.DateTimeFormat('es-ES', { weekday: 'short' }).format(dateObject);
+      const dayMonth = new Intl.DateTimeFormat('es-ES', { day: '2-digit', month: '2-digit' }).format(
+        dateObject
+      );
+      const normalizedWeekday = `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)}`.replace('.', '');
+      return `${normalizedWeekday} ${dayMonth}`;
+    } catch (_error) {
+      return isoDate;
+    }
   };
 
   const shiftPlanWeek = (weekOffset) => {
@@ -4236,9 +4076,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
       return;
     }
 
-    const selectedRecipeId =
-      planAssignmentRecipe?.id ||
-      (selectedPlanRecipeId ? Number(selectedPlanRecipeId) : null);
+    const selectedRecipeId = selectedPlanRecipeId ? Number(selectedPlanRecipeId) : null;
 
     if (!selectedRecipeId) {
       setPlanAssignFeedback('Selecciona una receta para planificar.');
@@ -4249,6 +4087,11 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     const isDateFormatValid = /^\d{4}-\d{2}-\d{2}$/.test(normalizedDate);
     if (!isDateFormatValid || Number.isNaN(new Date(`${normalizedDate}T00:00:00`).getTime())) {
       setPlanAssignFeedback('Ingresa una fecha válida en formato AAAA-MM-DD.');
+      return;
+    }
+
+    if (normalizedDate <= getTodayDateString()) {
+      setPlanAssignFeedback('La fecha debe ser futura. Selecciona mañana o una fecha posterior.');
       return;
     }
 
@@ -4300,8 +4143,8 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
     }
 
     const selectedRecipeName =
-      planAssignmentRecipe?.name ||
       planRecipeOptions.find((recipe) => String(recipe.id) === String(selectedRecipeId))?.name ||
+      planAssignmentRecipe?.name ||
       'Receta';
 
     const successMessage = `${selectedRecipeName} agregada a ${selectedMealOption.label.toLowerCase()} del ${normalizedDate}.`;
@@ -4744,28 +4587,58 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
             renderRecipeDetailView()
           ) : (
             <>
-              {displayedTab === 'recetas' && renderRecetasView()}
+              {displayedTab === 'recetas' && (
+                <RecetasTabScreen
+                  renderRecetasView={renderRecetasView}
+                />
+              )}
 
-              {displayedTab === 'lista' && renderListaView()}
+              {displayedTab === 'lista' && (
+                <ListaTabScreen
+                  styles={styles}
+                  palette={palette}
+                  isSupabaseConfigured={isSupabaseConfigured}
+                  shoppingInput={shoppingInput}
+                  setShoppingInput={setShoppingInput}
+                  isMutatingList={isMutatingList}
+                  handleAddItem={handleAddItem}
+                  canClearCompleted={canClearCompleted}
+                  canClearAll={canClearAll}
+                  handleClearCompleted={handleClearCompleted}
+                  handleClearAll={handleClearAll}
+                  listFeedback={listFeedback}
+                  isListLoading={isListLoading}
+                  shoppingItems={shoppingItems}
+                  decodeShoppingItemName={decodeShoppingItemName}
+                  handleToggleItem={handleToggleItem}
+                />
+              )}
 
-              {displayedTab === 'plan' && renderPlanView()}
+              {displayedTab === 'plan' && (
+                <PlanTabScreen
+                  styles={styles}
+                  palette={palette}
+                  formattedPlanWeekRange={formattedPlanWeekRange}
+                  shiftPlanWeek={shiftPlanWeek}
+                  isPlanLoading={isPlanLoading}
+                  isMutatingPlan={isMutatingPlan}
+                  planFeedback={planFeedback}
+                  planWeekDays={planWeekDays}
+                  handleOpenPlanAssignForDay={handleOpenPlanAssignForDay}
+                  handleOpenPlanRecipeDetail={handleOpenPlanRecipeDetail}
+                  handleOpenPlanAssignForDayMeal={handleOpenPlanAssignForDayMeal}
+                  handleRemoveRecipeFromPlanSlot={handleRemoveRecipeFromPlanSlot}
+                />
+              )}
 
               {displayedTab === 'perfil' && (
-                <View>
-                  <Text style={styles.title}>Perfil</Text>
-                  <Text style={styles.body}>
-                    Aquí irá la configuración de cuenta, preferencias y datos personales.
-                  </Text>
-                  <View style={styles.profileCard}>
-                    {profileDisplayName ? (
-                      <Text style={styles.sessionText}>Nombre: {profileDisplayName}</Text>
-                    ) : null}
-                    {userEmail ? <Text style={styles.sessionText}>Sesion activa: {userEmail}</Text> : null}
-                    <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
-                      <Text style={styles.logoutText}>Cerrar sesion</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
+                <PerfilTabScreen
+                  styles={styles}
+                  profileDisplayName={profileDisplayName}
+                  profileAvatarUrl={userAvatar}
+                  userEmail={userEmail}
+                  onLogout={onLogout}
+                />
               )}
             </>
           )}
@@ -4773,40 +4646,40 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
       </Animated.View>
 
       <View style={styles.bottomBar}>
-        {tabs.map((tab) => {
+        {tabs.map((tab, index) => {
           const isActive = activeTab === tab.key;
 
           return (
-            <TouchableOpacity
-              key={tab.key}
-              style={[styles.tabButton, isActive && styles.tabButtonActive]}
-              onPress={() => {
-                if (selectedRecipeForView) {
-                  closeRecipeDetailView();
-                }
-                setActiveTab(tab.key);
-              }}
-            >
-              <Ionicons
-                name={tab.icon}
-                size={20}
-                color={isActive ? palette.accent : '#D9F4EE'}
-              />
-              <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{tab.label}</Text>
-            </TouchableOpacity>
+            <React.Fragment key={tab.key}>
+              {index === 2 ? <View style={styles.bottomFabGap} /> : null}
+              <TouchableOpacity
+                style={[styles.tabButton, isActive && styles.tabButtonActive]}
+                onPress={() => {
+                  if (selectedRecipeForView) {
+                    closeRecipeDetailView();
+                  }
+                  setActiveTab(tab.key);
+                }}
+              >
+                <Ionicons
+                  name={tab.icon}
+                  size={20}
+                  color={isActive ? palette.accent : '#D9F4EE'}
+                />
+                <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{tab.label}</Text>
+              </TouchableOpacity>
+            </React.Fragment>
           );
         })}
       </View>
 
-      {!selectedRecipeForView ? (
-        <TouchableOpacity
-          style={styles.fabButton}
-          onPress={openCreateRecipeSheet}
-          activeOpacity={0.9}
-        >
-          <Ionicons name="add" size={28} color={palette.card} />
-        </TouchableOpacity>
-      ) : null}
+      <TouchableOpacity
+        style={styles.fabButton}
+        onPress={openCreateRecipeSheet}
+        activeOpacity={0.9}
+      >
+        <Ionicons name="add" size={32} color={palette.card} />
+      </TouchableOpacity>
 
       <Modal
         visible={isCreateRecipeSheetOpen}
@@ -5201,7 +5074,15 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
               >
                 <Ionicons name="chevron-back" size={22} color={palette.card} />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.manualShareAction}>
+              <TouchableOpacity
+                style={styles.manualShareAction}
+                onPress={() => {
+                  void handleShareRecipeLink(
+                    manualRecipeTitle || 'Receta',
+                    setManualRecipeFeedback
+                  );
+                }}
+              >
                 <Text style={styles.manualShareText}>Compartir</Text>
                 <Ionicons name="share-outline" size={18} color={palette.card} />
               </TouchableOpacity>
@@ -5263,7 +5144,12 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.manualQuickAction}
-                onPress={() => setManualRecipeFeedback('Compartir estara disponible pronto.')}
+                onPress={() => {
+                  void handleShareRecipeLink(
+                    manualRecipeTitle || 'Receta',
+                    setManualRecipeFeedback
+                  );
+                }}
               >
                 <View style={styles.manualQuickActionIcon}>
                   <Ionicons name="share-social-outline" size={20} color={palette.accent} />
@@ -5542,9 +5428,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
               Selecciona fecha y tiempo de comida para esta receta.
             </Text>
 
-            {planAssignmentRecipe?.name ? (
-              <Text style={styles.planAssignRecipeName}>{planAssignmentRecipe.name}</Text>
-            ) : isPlanRecipeOptionsLoading ? (
+            {isPlanRecipeOptionsLoading ? (
               <View style={styles.cookbookPickerLoadingWrap}>
                 <ActivityIndicator size="small" color={palette.accent} />
               </View>
@@ -5555,8 +5439,19 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
             ) : (
               <View style={styles.planRecipeOptionsWrap}>
                 <Text style={styles.planRecipeOptionsLabel}>Receta</Text>
+                <View style={styles.planRecipeSearchWrap}>
+                  <Ionicons name="search-outline" size={16} color={palette.mutedText} />
+                  <TextInput
+                    style={styles.planRecipeSearchInput}
+                    value={planRecipeSearchQuery}
+                    onChangeText={setPlanRecipeSearchQuery}
+                    placeholder="Buscar receta..."
+                    placeholderTextColor={palette.mutedText}
+                    editable={!isSavingPlanAssignment}
+                  />
+                </View>
                 <ScrollView style={styles.planRecipeOptionsList}>
-                  {planRecipeOptions.map((recipe) => {
+                  {filteredPlanRecipeOptions.map((recipe) => {
                     const isSelected = String(recipe.id) === String(selectedPlanRecipeId);
 
                     return (
@@ -5580,20 +5475,87 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName 
                       </TouchableOpacity>
                     );
                   })}
+                  {filteredPlanRecipeOptions.length === 0 ? (
+                    <Text style={styles.cookbookPickerEmptyText}>
+                      No hay recetas que coincidan con la búsqueda.
+                    </Text>
+                  ) : null}
                 </ScrollView>
               </View>
             )}
 
-            <TextInput
-              style={styles.importInput}
-              value={planAssignDate}
-              onChangeText={setPlanAssignDate}
-              placeholder="AAAA-MM-DD"
-              placeholderTextColor={palette.mutedText}
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={!isSavingPlanAssignment}
-            />
+            <Text style={styles.planAssignDateQuestion}>¿Para cuándo es?</Text>
+            <View style={styles.planAssignDateModeRow}>
+              {[
+                { key: 'today', label: 'Hoy' },
+                { key: 'tomorrow', label: 'Mañana' },
+                { key: 'custom', label: 'Seleccionar cuándo' },
+              ].map((option) => {
+                const isSelected = planAssignDateMode === option.key;
+                const isDisabled = option.key === 'today';
+                return (
+                  <TouchableOpacity
+                    key={`plan-date-mode-${option.key}`}
+                    style={[
+                      styles.planAssignDateModeButton,
+                      isSelected && styles.planAssignDateModeButtonSelected,
+                      (isSavingPlanAssignment || isDisabled) && styles.buttonDisabled,
+                    ]}
+                    onPress={() => handleSelectPlanAssignDateMode(option.key)}
+                    disabled={isSavingPlanAssignment || isDisabled}
+                  >
+                    <Text
+                      style={[
+                        styles.planAssignDateModeButtonText,
+                        isSelected && styles.planAssignDateModeButtonTextSelected,
+                      ]}
+                    >
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={styles.planAssignDateSelectedText}>Fecha: {planAssignDate || '-'}</Text>
+
+            {planAssignDateMode === 'custom' ? (
+              <View style={styles.planAssignDatePickerWrap}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.planAssignDatePickerList}
+                >
+                  {planAssignCustomDateOptions.map((isoDate) => {
+                    const isSelected = planAssignDate === isoDate;
+                    return (
+                      <TouchableOpacity
+                        key={`plan-custom-date-${isoDate}`}
+                        style={[
+                          styles.planAssignDateChip,
+                          isSelected && styles.planAssignDateChipSelected,
+                          isSavingPlanAssignment && styles.buttonDisabled,
+                        ]}
+                        onPress={() => {
+                          setPlanAssignDate(isoDate);
+                          setPlanAssignFeedback('');
+                        }}
+                        disabled={isSavingPlanAssignment}
+                      >
+                        <Text
+                          style={[
+                            styles.planAssignDateChipText,
+                            isSelected && styles.planAssignDateChipTextSelected,
+                          ]}
+                        >
+                          {formatPlanAssignDateChipLabel(isoDate)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            ) : null}
 
             <View style={styles.planAssignMealRow}>
               {planMealOptions.map((option) => {
@@ -6176,6 +6138,118 @@ const styles = StyleSheet.create({
     borderColor: '#DCE6EC',
     padding: spacing.md,
   },
+  profilePhotoButton: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignSelf: 'center',
+    marginBottom: spacing.md,
+    borderWidth: 2,
+    borderColor: '#C6D4E8',
+    overflow: 'hidden',
+    backgroundColor: '#EDF5FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profilePhotoImage: {
+    width: '100%',
+    height: '100%',
+  },
+  profilePhotoPlaceholder: {
+    flex: 1,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EDF5FF',
+  },
+  profilePhotoEditBadge: {
+    position: 'absolute',
+    right: 2,
+    bottom: 2,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#7B8FBC',
+    borderWidth: 1,
+    borderColor: palette.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileNameText: {
+    color: palette.accent,
+    fontFamily: fonts.semiBold,
+    fontSize: 20,
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  profileNameInput: {
+    borderWidth: 1,
+    borderColor: '#C6D4E8',
+    borderRadius: 10,
+    backgroundColor: '#FAFCFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 16,
+    marginBottom: 8,
+  },
+  profileEmailText: {
+    color: palette.mutedText,
+    fontFamily: fonts.regular,
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: spacing.md,
+  },
+  profileEditActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  profileEditButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#7B8FBC',
+    borderRadius: 12,
+    paddingVertical: 10,
+    marginBottom: spacing.md,
+  },
+  profileDivider: {
+    height: 1,
+    backgroundColor: '#DCE6EC',
+    marginBottom: spacing.md,
+  },
+  profilePlusButton: {
+    borderWidth: 1,
+    borderColor: '#C6D4E8',
+    borderRadius: 12,
+    backgroundColor: '#EEF5FF',
+    minHeight: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: spacing.md,
+  },
+  profilePlusButtonText: {
+    color: palette.accent,
+    fontFamily: fonts.semiBold,
+    fontSize: 15,
+  },
+  profileMenuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 42,
+    marginBottom: 6,
+  },
+  profileMenuText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 15,
+  },
   sessionText: {
     color: palette.mutedText,
     fontFamily: fonts.regular,
@@ -6197,24 +6271,35 @@ const styles = StyleSheet.create({
     backgroundColor: palette.accent,
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
     paddingHorizontal: spacing.sm,
-    paddingTop: spacing.sm,
+    paddingTop: spacing.md,
     paddingBottom: spacing.md,
+    overflow: 'visible',
+  },
+  bottomFabGap: {
+    width: 74,
   },
   fabButton: {
     position: 'absolute',
-    right: spacing.lg,
-    bottom: 88,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    left: '50%',
+    marginLeft: -36,
+    bottom: 52,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: palette.button,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 4,
+    borderWidth: 5,
     borderColor: palette.background,
     zIndex: 10,
-    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 10,
   },
   sheetOverlay: {
     flex: 1,
@@ -7195,9 +7280,92 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginBottom: 6,
   },
+  planRecipeSearchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#C6D4E8',
+    borderRadius: 10,
+    backgroundColor: '#FAFCFF',
+    paddingHorizontal: 10,
+    marginBottom: 8,
+  },
+  planRecipeSearchInput: {
+    flex: 1,
+    color: palette.accent,
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    paddingVertical: 8,
+  },
   planRecipeOptionsList: {
     maxHeight: 180,
     marginBottom: spacing.sm,
+  },
+  planAssignDateQuestion: {
+    color: palette.mutedText,
+    fontFamily: fonts.medium,
+    fontSize: 12,
+    marginBottom: 6,
+  },
+  planAssignDateModeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: 8,
+  },
+  planAssignDateModeButton: {
+    borderWidth: 1,
+    borderColor: '#C6D4E8',
+    borderRadius: 10,
+    backgroundColor: '#FAFCFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  planAssignDateModeButtonSelected: {
+    borderColor: palette.button,
+    backgroundColor: '#EDF5FF',
+  },
+  planAssignDateModeButtonText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 12,
+  },
+  planAssignDateModeButtonTextSelected: {
+    color: palette.button,
+  },
+  planAssignDateSelectedText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 12,
+    marginBottom: spacing.sm,
+  },
+  planAssignDatePickerWrap: {
+    marginBottom: spacing.sm,
+  },
+  planAssignDatePickerList: {
+    gap: spacing.sm,
+    paddingRight: spacing.sm,
+  },
+  planAssignDateChip: {
+    borderWidth: 1,
+    borderColor: '#C6D4E8',
+    borderRadius: 999,
+    backgroundColor: '#FAFCFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  planAssignDateChipSelected: {
+    borderColor: palette.button,
+    backgroundColor: '#EDF5FF',
+  },
+  planAssignDateChipText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 12,
+  },
+  planAssignDateChipTextSelected: {
+    color: palette.button,
   },
   planAssignMealRow: {
     flexDirection: 'row',
