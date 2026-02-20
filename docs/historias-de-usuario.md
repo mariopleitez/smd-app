@@ -23,6 +23,11 @@ Documento vivo de funcionalidades actuales de la app, organizado por pantalla/fl
 | HU-012 | Login | Como usuario, quiero ver mensajes claros si falla el inicio de sesion, para saber como corregirlo. |
 | HU-013 | Login | Como usuario, quiero ir a registro desde login, para crear cuenta si aun no tengo una. |
 | HU-014 | Login | Como usuario, quiero volver a Comenzar desde login, para cambiar de flujo. |
+| HU-094 | Login | Como usuario, quiero acceder a "Olvidaste tu contrasena?" desde login, para iniciar la recuperacion de mi cuenta. |
+| HU-095 | Recuperar contrasena | Como usuario, quiero ingresar mi correo y recibir un enlace de recuperacion, para restablecer mi contrasena. |
+| HU-096 | Recuperar contrasena | Como usuario, quiero ver mensajes de exito/error al solicitar el enlace, para confirmar si la solicitud fue procesada. |
+| HU-097 | Restablecer contrasena | Como usuario, quiero abrir el enlace recibido y definir una nueva contrasena, para recuperar acceso a mi cuenta. |
+| HU-098 | Auth (Login/Registro/Restablecer) | Como usuario, quiero mostrar u ocultar la contrasena con un icono de ojo, para validar lo que escribo. |
 | HU-015 | Global / Sesion | Como usuario autenticado, quiero que la app me lleve automaticamente a Principal, para continuar rapido. |
 | HU-016 | Global / Sesion | Como usuario sin sesion, quiero ser redirigido a Comenzar, para iniciar sesion o registrarme. |
 | HU-017 | Onboarding inicial | Como usuario nuevo o sin recetas, quiero ver una oferta de 3 recetas de bienvenida, para empezar rapido. |

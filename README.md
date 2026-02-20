@@ -6,6 +6,10 @@ Current scope: auth, recipe management, private cookbooks, shopping list, and we
 ## Features
 
 - Email/password auth with Supabase (`signUp`, `signInWithPassword`, `signOut`).
+- Password recovery flow with Supabase:
+  - Request reset link from Login (`resetPasswordForEmail`).
+  - Open recovery link and set a new password (`updateUser`).
+  - Password visibility toggle (`eye/eye-off`) in Login, Registro, and reset screen.
 - Cookbook management (`cookbooks` and `cookbook_recipes`) with private visibility per owner.
 - Recipe management (`recipes`): create, edit, delete, public/private toggle, source URL, step photos, and step reorder.
 - Recipe import from:
@@ -38,6 +42,14 @@ The main app is orchestrated by `screens/PrincipalScreen.js`, with tab views spl
 - `screens/main-tabs/ListaTabScreen.js`
 - `screens/main-tabs/PlanTabScreen.js`
 - `screens/main-tabs/PerfilTabScreen.js`
+
+### `Auth` (Comenzar / Login / Registro / Recuperar)
+
+- `Comenzar`: entry point with actions for Login and Registro.
+- `Login`: email/password sign-in, inline password visibility toggle, and `Olvidaste tu contrasena?`.
+- `Registro`: account creation (name/email/password) with field validation and password visibility toggle.
+- `RecuperarContrasenaScreen`: sends recovery email link.
+- `RestablecerContrasenaScreen`: sets the new password after opening the recovery link.
 
 ### `Recetas`
 
@@ -102,7 +114,7 @@ The main app is orchestrated by `screens/PrincipalScreen.js`, with tab views spl
 ## Project Structure
 
 - `App.js`: root navigation/auth flow.
-- `screens/`: app screens (`Login`, `Registro`, `Principal`, etc.).
+- `screens/`: app screens (`Login`, `Registro`, `RecuperarContrasena`, `RestablecerContrasena`, `Principal`, etc.).
 - `screens/main-tabs/`: tab components rendered by `PrincipalScreen`.
 - `lib/supabase.js`: Supabase client setup.
 - `supabase/sql/`: SQL migrations to create tables, indexes, triggers, and RLS policies.
@@ -132,6 +144,8 @@ npm install
 ```bash
 EXPO_PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
+# Optional override for auth recovery links:
+# EXPO_PUBLIC_PASSWORD_RECOVERY_REDIRECT_URL=https://smd-app-seven.vercel.app
 ```
 
 3. Start the app (web):
@@ -171,7 +185,11 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
 ```
 
 4. Deploy.
-5. In Supabase Auth settings, set your Vercel URL as `Site URL` (for example `https://<your-project>.vercel.app`).
+5. In Supabase Auth settings, configure URLs:
+   - `Site URL`: `https://smd-app-seven.vercel.app`
+   - `Redirect URLs` (allow list):
+     - `https://smd-app-seven.vercel.app`
+     - `http://localhost:8081` (or your active local Expo port)
 
 Configured values:
 
@@ -184,6 +202,20 @@ Optional CLI deploy:
 npx vercel
 npx vercel --prod
 ```
+
+## Supabase Auth URL Setup (Recovery Link)
+
+To make "Recuperar contrasena" links work end-to-end:
+
+1. In Supabase Dashboard -> Authentication -> URL Configuration:
+   - Set `Site URL` to `https://smd-app-seven.vercel.app`.
+2. Add redirect allow-list entries:
+   - `https://smd-app-seven.vercel.app`
+   - local URL used during development (`http://localhost:8081`, `http://localhost:8082`, etc).
+3. In this app, recovery redirect resolves in this order:
+   - `EXPO_PUBLIC_PASSWORD_RECOVERY_REDIRECT_URL` (if set)
+   - current web origin (if not localhost)
+   - fallback default: `https://smd-app-seven.vercel.app`
 
 ## Supabase Database Setup
 
