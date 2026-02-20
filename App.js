@@ -19,6 +19,7 @@ import {
 import LoginScreen from './screens/LoginScreen';
 import ComenzarScreen from './screens/ComenzarScreen';
 import RegistroScreen from './screens/RegistroScreen';
+import RecuperarContrasenaScreen from './screens/RecuperarContrasenaScreen';
 import PrincipalScreen from './screens/PrincipalScreen';
 import SplashScreen from './screens/SplashScreen';
 import { palette } from './theme';
@@ -29,10 +30,33 @@ const SCREENS = Object.freeze({
   COMENZAR: 'Comenzar',
   LOGIN: 'Login',
   REGISTRO: 'Registro',
+  RECUPERAR: 'RecuperarContrasena',
   PRINCIPAL: 'Principal',
 });
 
 const STARTER_RECIPES_COUNT = 3;
+const DEFAULT_PASSWORD_RECOVERY_REDIRECT_URL = 'https://smd-app-seven.vercel.app';
+
+const getPasswordRecoveryRedirectUrl = () => {
+  const configuredRedirectUrl = String(
+    process.env.EXPO_PUBLIC_PASSWORD_RECOVERY_REDIRECT_URL || ''
+  ).trim();
+  if (configuredRedirectUrl) {
+    return configuredRedirectUrl;
+  }
+
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    const currentOrigin = String(window.location.origin || '').trim();
+    const isLocalOrigin =
+      currentOrigin.includes('localhost') || currentOrigin.includes('127.0.0.1');
+
+    if (currentOrigin && !isLocalOrigin) {
+      return currentOrigin;
+    }
+  }
+
+  return DEFAULT_PASSWORD_RECOVERY_REDIRECT_URL;
+};
 
 const getStarterRecipesFromBundle = () => {
   try {
@@ -410,6 +434,43 @@ export default function App() {
     return { ok: true };
   };
 
+  const handlePasswordRecovery = async ({ email }) => {
+    if (!supabase) {
+      return {
+        ok: false,
+        message: 'Configura EXPO_PUBLIC_SUPABASE_URL y EXPO_PUBLIC_SUPABASE_ANON_KEY en .env.',
+      };
+    }
+
+    const recoveryOptions = { redirectTo: getPasswordRecoveryRedirectUrl() };
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, recoveryOptions);
+      if (error) {
+        return { ok: false, message: error.message };
+      }
+    } catch (unexpectedError) {
+      if (isStorageQuotaError(unexpectedError)) {
+        return {
+          ok: false,
+          message: 'El almacenamiento del navegador esta lleno. Limpia los datos del sitio y vuelve a intentar.',
+        };
+      }
+      return {
+        ok: false,
+        message:
+          unexpectedError instanceof Error
+            ? unexpectedError.message
+            : 'No fue posible enviar el enlace de recuperacion por un error inesperado.',
+      };
+    }
+
+    return {
+      ok: true,
+      message: 'Si el correo existe, recibirás un enlace para recuperar tu contraseña.',
+    };
+  };
+
   const handleLogout = async () => {
     if (supabase) {
       try {
@@ -436,6 +497,7 @@ export default function App() {
           <LoginScreen
             onLogin={handleLogin}
             onGoRegistro={() => navigateTo(SCREENS.REGISTRO)}
+            onGoRecuperar={() => navigateTo(SCREENS.RECUPERAR)}
             onBack={() => navigateTo(SCREENS.COMENZAR)}
             supabaseConfigured={isSupabaseConfigured}
           />
@@ -445,6 +507,15 @@ export default function App() {
           <RegistroScreen
             onRegister={handleRegister}
             onGoLogin={() => navigateTo(SCREENS.LOGIN)}
+            onBack={() => navigateTo(SCREENS.COMENZAR)}
+            supabaseConfigured={isSupabaseConfigured}
+          />
+        );
+      case SCREENS.RECUPERAR:
+        return (
+          <RecuperarContrasenaScreen
+            onSendRecovery={handlePasswordRecovery}
+            onBackToLogin={() => navigateTo(SCREENS.LOGIN)}
             onBack={() => navigateTo(SCREENS.COMENZAR)}
             supabaseConfigured={isSupabaseConfigured}
           />

@@ -7,11 +7,17 @@ import { fonts, palette, spacing } from '../theme';
  */
 export function AppButton({ label, onPress, variant = 'primary', disabled = false }) {
   const isSecondary = variant === 'secondary';
+  const isGhost = variant === 'ghost';
 
-  const buttonStyle = isSecondary
-    ? [styles.button, styles.secondaryButton, disabled && styles.buttonDisabled]
-    : [styles.button, styles.primaryButton, disabled && styles.buttonDisabled];
-  const textStyle = isSecondary ? [styles.text, styles.secondaryText] : [styles.text, styles.primaryText];
+  const buttonStyle = [
+    styles.button,
+    isSecondary ? styles.secondaryButton : isGhost ? styles.ghostButton : styles.primaryButton,
+    disabled && styles.buttonDisabled,
+  ];
+  const textStyle = [
+    styles.text,
+    isSecondary ? styles.secondaryText : isGhost ? styles.ghostText : styles.primaryText,
+  ];
 
   return (
     <TouchableOpacity style={buttonStyle} onPress={onPress} disabled={disabled}>
@@ -35,6 +41,14 @@ const styles = StyleSheet.create({
     backgroundColor: palette.accent,
     borderWidth: 0,
   },
+  ghostButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    marginTop: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    alignSelf: 'center',
+  },
   buttonDisabled: {
     opacity: 0.6,
   },
@@ -48,6 +62,12 @@ const styles = StyleSheet.create({
   },
   secondaryText: {
     color: palette.background,
+  },
+  ghostText: {
+    color: palette.mutedText,
+    fontSize: 14,
+    fontFamily: fonts.regular,
+    fontWeight: '400',
   },
 });
 

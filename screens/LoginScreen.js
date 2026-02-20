@@ -1,12 +1,20 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import AppButton from '../components/AppButton';
 import ScreenContainer from '../components/ScreenContainer';
 import { fonts, palette, spacing } from '../theme';
 
-export default function LoginScreen({ onLogin, onGoRegistro, onBack, supabaseConfigured }) {
+export default function LoginScreen({
+  onLogin,
+  onGoRegistro,
+  onGoRecuperar,
+  onBack,
+  supabaseConfigured,
+}) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [feedback, setFeedback] = useState('');
 
@@ -37,8 +45,12 @@ export default function LoginScreen({ onLogin, onGoRegistro, onBack, supabaseCon
 
   return (
     <ScreenContainer showCard={false}>
-      <Text style={styles.overline}>Placeholder de Autenticacion</Text>
-      <Text style={styles.title}>Ingresar a tu Cuenta</Text>
+      <Image
+        source={require('../public/logo.png')}
+        style={styles.logo}
+        resizeMode="contain"
+      />
+      <Text style={styles.title}>Ingresar</Text>
       {!supabaseConfigured ? (
         <Text style={styles.warning}>
           Supabase no está configurado. Agrega `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY` en `.env`.
@@ -58,15 +70,29 @@ export default function LoginScreen({ onLogin, onGoRegistro, onBack, supabaseCon
           onChangeText={setEmail}
         />
         <Text style={styles.label}>Contraseña</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="********"
-          placeholderTextColor={palette.mutedText}
-          secureTextEntry
-          textContentType="password"
-          value={password}
-          onChangeText={setPassword}
-        />
+        <View style={styles.passwordField}>
+          <TextInput
+            style={[styles.input, styles.passwordInput]}
+            placeholder="********"
+            placeholderTextColor={palette.mutedText}
+            secureTextEntry={!showPassword}
+            textContentType="password"
+            value={password}
+            onChangeText={setPassword}
+          />
+          <TouchableOpacity
+            onPress={() => setShowPassword((current) => !current)}
+            style={styles.passwordToggle}
+            accessibilityRole="button"
+            accessibilityLabel={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+          >
+            <Ionicons
+              name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+              size={20}
+              color={palette.mutedText}
+            />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {feedback ? <Text style={styles.feedback}>{feedback}</Text> : null}
@@ -76,21 +102,24 @@ export default function LoginScreen({ onLogin, onGoRegistro, onBack, supabaseCon
         onPress={handleSubmit}
         disabled={isLoading}
       />
+      <AppButton
+        label="¿Olvidaste tu contraseña?"
+        onPress={onGoRecuperar}
+        variant="ghost"
+        disabled={isLoading}
+      />
       <AppButton label="Crear cuenta" onPress={onGoRegistro} variant="secondary" disabled={isLoading} />
-      <AppButton label="Volver" onPress={onBack} disabled={isLoading} />
+      <AppButton label="Volver" onPress={onBack} variant="ghost" disabled={isLoading} />
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  overline: {
-    color: palette.button,
-    fontFamily: fonts.medium,
-    fontSize: 12,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
+  logo: {
+    width: 120,
+    height: 120,
+    alignSelf: 'center',
     marginBottom: spacing.sm,
-    textAlign: 'center',
   },
   formCard: {
     backgroundColor: palette.card,
@@ -133,6 +162,19 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     fontSize: 16,
     color: '#1E4541',
+  },
+  passwordField: {
+    position: 'relative',
+  },
+  passwordInput: {
+    paddingRight: 44,
+  },
+  passwordToggle: {
+    position: 'absolute',
+    right: 12,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
   },
   title: {
     color: palette.accent,

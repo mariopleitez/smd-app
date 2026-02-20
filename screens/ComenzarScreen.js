@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 import AppButton from '../components/AppButton';
 import ScreenContainer from '../components/ScreenContainer';
 import { fonts, palette, spacing } from '../theme';
@@ -11,10 +11,15 @@ export default function ComenzarScreen({ onGoLogin, onGoRegistro }) {
       contentStyle={styles.content}
     >
       <View style={styles.heroCard}>
-        <Text style={styles.overline}>Placeholder de Inicio</Text>
+        <Image
+          source={require('../public/logo.png')}
+          style={styles.logo}
+          resizeMode="contain"
+        />
+        {/* <Text style={styles.overline}>Bienvenidos</Text> */}
         <Text style={styles.title}>Comenzar</Text>
         <Text style={styles.body}>
-          Esta pantalla será tu portada de acceso. Por ahora dejamos acciones claras para entrar o crear cuenta.
+          Importa todas las recetas que quieras, desde Instagram, Facebook, TikTok, Pinterest, Fotos, libros y sitios web.
         </Text>
       </View>
 
@@ -37,6 +42,12 @@ const styles = StyleSheet.create({
     borderColor: '#DCE6EC',
     padding: spacing.lg,
     marginBottom: spacing.lg,
+    alignItems: 'center',
+  },
+  logo: {
+    width: 120,
+    height: 120,
+    marginBottom: spacing.sm,
   },
   overline: {
     color: palette.button,
@@ -51,11 +62,13 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     fontSize: 36,
     marginBottom: spacing.sm,
+    textAlign: 'center',
   },
   body: {
     color: palette.text,
     fontFamily: fonts.regular,
     lineHeight: 22,
+    textAlign: 'center',
   },
   actions: {
     marginTop: spacing.sm,

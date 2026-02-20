@@ -1,44 +1,52 @@
 import React, { useState } from 'react';
-import { Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Image, StyleSheet, Text, TextInput, View } from 'react-native';
 import AppButton from '../components/AppButton';
 import ScreenContainer from '../components/ScreenContainer';
 import { fonts, palette, spacing } from '../theme';
 
-export default function RegistroScreen({ onRegister, onGoLogin, onBack, supabaseConfigured }) {
-  const [name, setName] = useState('');
+export default function RecuperarContrasenaScreen({
+  onSendRecovery,
+  onBackToLogin,
+  onBack,
+  supabaseConfigured,
+}) {
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [feedback, setFeedback] = useState({ message: '', type: 'error' });
 
   const handleSubmit = async () => {
-    const safeName = name.trim();
     const safeEmail = email.trim();
-
-    if (!safeName || !safeEmail || !password) {
-      setFeedback({ message: 'Completa todos los campos para continuar.', type: 'error' });
-      return;
-    }
-
-    if (password.length < 6) {
-      setFeedback({ message: 'La contraseña debe tener al menos 6 caracteres.', type: 'error' });
+    if (!safeEmail || !safeEmail.includes('@')) {
+      setFeedback({ message: 'Ingresa un correo válido.', type: 'error' });
       return;
     }
 
     setIsLoading(true);
     setFeedback({ message: '', type: 'error' });
-    const result = await onRegister({ name: safeName, email: safeEmail, password });
-    setIsLoading(false);
+    try {
+      const result = await onSendRecovery({ email: safeEmail });
+      if (!result?.ok) {
+        setFeedback({
+          message: result?.message || 'No fue posible enviar el correo de recuperación.',
+          type: 'error',
+        });
+        return;
+      }
 
-    if (!result.ok) {
-      setFeedback({ message: result.message || 'No fue posible crear la cuenta.', type: 'error' });
-      return;
-    }
-
-    if (result.message) {
-      setFeedback({ message: result.message, type: 'success' });
+      setFeedback({
+        message: result?.message || 'Revisa tu correo para recuperar tu contraseña.',
+        type: 'success',
+      });
+    } catch (unexpectedError) {
+      setFeedback({
+        message:
+          unexpectedError instanceof Error
+            ? unexpectedError.message
+            : 'No fue posible enviar el correo de recuperación.',
+        type: 'error',
+      });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -49,7 +57,10 @@ export default function RegistroScreen({ onRegister, onGoLogin, onBack, supabase
         style={styles.logo}
         resizeMode="contain"
       />
-      <Text style={styles.title}>Registro</Text>
+      <Text style={styles.title}>Recuperar contraseña</Text>
+      <Text style={styles.subtitle}>
+        Escribe tu correo y te enviaremos un enlace para restablecerla.
+      </Text>
       {!supabaseConfigured ? (
         <Text style={styles.warning}>
           Supabase no está configurado. Agrega `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY` en `.env`.
@@ -57,47 +68,17 @@ export default function RegistroScreen({ onRegister, onGoLogin, onBack, supabase
       ) : null}
 
       <View style={styles.formCard}>
-        <Text style={styles.label}>Nombre</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="Tu nombre"
-          placeholderTextColor={palette.mutedText}
-          value={name}
-          onChangeText={setName}
-        />
         <Text style={styles.label}>Correo electrónico</Text>
         <TextInput
           style={styles.input}
           keyboardType="email-address"
-          autoCapitalize="none"
           placeholder="tu@email.com"
           placeholderTextColor={palette.mutedText}
+          autoCapitalize="none"
+          textContentType="emailAddress"
           value={email}
           onChangeText={setEmail}
         />
-        <Text style={styles.label}>Contraseña</Text>
-        <View style={styles.passwordField}>
-          <TextInput
-            style={[styles.input, styles.passwordInput]}
-            secureTextEntry={!showPassword}
-            placeholder="********"
-            placeholderTextColor={palette.mutedText}
-            value={password}
-            onChangeText={setPassword}
-          />
-          <TouchableOpacity
-            onPress={() => setShowPassword((current) => !current)}
-            style={styles.passwordToggle}
-            accessibilityRole="button"
-            accessibilityLabel={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-          >
-            <Ionicons
-              name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-              size={20}
-              color={palette.mutedText}
-            />
-          </TouchableOpacity>
-        </View>
       </View>
 
       {feedback.message ? (
@@ -107,11 +88,16 @@ export default function RegistroScreen({ onRegister, onGoLogin, onBack, supabase
       ) : null}
 
       <AppButton
-        label={isLoading ? 'Creando cuenta...' : 'Crear cuenta'}
+        label={isLoading ? 'Enviando enlace...' : 'Enviar enlace'}
         onPress={handleSubmit}
         disabled={isLoading}
       />
-      <AppButton label="Ya tengo cuenta" onPress={onGoLogin} variant="secondary" disabled={isLoading} />
+      <AppButton
+        label="Volver a Iniciar sesión"
+        onPress={onBackToLogin}
+        variant="secondary"
+        disabled={isLoading}
+      />
       <AppButton label="Volver" onPress={onBack} variant="ghost" disabled={isLoading} />
     </ScreenContainer>
   );
@@ -128,8 +114,15 @@ const styles = StyleSheet.create({
     color: palette.accent,
     fontFamily: fonts.bold,
     fontSize: 34,
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
     textAlign: 'center',
+  },
+  subtitle: {
+    color: palette.mutedText,
+    fontFamily: fonts.regular,
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: spacing.md,
   },
   formCard: {
     backgroundColor: palette.card,
@@ -154,7 +147,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     fontSize: 15,
     marginBottom: 8,
-    marginTop: 12,
   },
   input: {
     borderWidth: 1,
@@ -166,19 +158,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     fontSize: 16,
     color: palette.accent,
-  },
-  passwordField: {
-    position: 'relative',
-  },
-  passwordInput: {
-    paddingRight: 44,
-  },
-  passwordToggle: {
-    position: 'absolute',
-    right: 12,
-    top: 0,
-    bottom: 0,
-    justifyContent: 'center',
   },
   feedback: {
     color: '#B42318',
