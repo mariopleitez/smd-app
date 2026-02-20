@@ -1,0 +1,98 @@
+<!--
+Subject: Bienvenid@ a SAVE MY DISH
+Use this HTML in Supabase Dashboard -> Authentication -> Email Templates -> Confirm signup
+Base colors from .env:
+- APP_COLOR_PRINCIPAL: #1E4541
+- APP_COLOR_BOTON: #7998CE
+- APP_COLOR_FONDO: #FFF5E6
+-->
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bienvenid@ a SAVE MY DISH</title>
+  </head>
+  <body style="margin:0;padding:0;background:#FFF5E6;font-family:Arial,Helvetica,sans-serif;color:#36524D;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FFF5E6;padding:24px 12px;">
+      <tr>
+        <td align="center">
+          <table
+            role="presentation"
+            width="100%"
+            cellpadding="0"
+            cellspacing="0"
+            style="max-width:640px;background:#FFFFFF;border:1px solid #D5E0F3;border-radius:16px;overflow:hidden;"
+          >
+            <tr>
+              <td style="padding:28px 24px 12px 24px;">
+                <h1 style="margin:0 0 14px 0;font-size:28px;line-height:1.2;color:#1E4541;">Bienvenid@ a SAVE MY DISH</h1>
+                <p style="margin:0 0 12px 0;font-size:16px;line-height:1.6;color:#36524D;">
+                  Muchas gracias por unirte a nuestra comunidad de cocina, estamos encantados de tenerte aqui.
+                </p>
+                <p style="margin:0 0 12px 0;font-size:16px;line-height:1.6;color:#36524D;">
+                  Creamos SAVEMYDISH para ayudarte a planificar, comprar y cocinar mas rapido. Puedes importar recetas desde cualquier lugar en solo segundos.
+                </p>
+                <p style="margin:0 0 6px 0;font-size:16px;line-height:1.6;color:#1E4541;font-weight:700;">
+                  Unete a nuestro grupo de Facebook
+                </p>
+                <p style="margin:0 0 18px 0;font-size:16px;line-height:1.6;color:#36524D;">
+                  Nuestro grupo de Facebook es un espacio seguro para compartir ideas de recetas, conocer nuevas funciones y darnos tu opinion y comentarios directamente.
+                </p>
+                <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 20px 0;">
+                  <tr>
+                    <td align="center" style="border-radius:10px;background:#7998CE;">
+                      <a
+                        href="https://www.facebook.com/profile.php?id=61588005573280"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style="display:inline-block;padding:13px 22px;color:#ffffff;font-weight:700;font-size:15px;text-decoration:none;"
+                        >UNETE AHORA</a
+                      >
+                    </td>
+                  </tr>
+                </table>
+                <p style="margin:0 0 12px 0;font-size:16px;line-height:1.6;color:#36524D;">
+                  Si tienes alguna pregunta o comentario, no dudes en escribirnos. Tu opinion nos ayudaria muchisimo a mejorar la experiencia para ti y para toda la comunidad.
+                </p>
+                <p style="margin:0 0 18px 0;font-size:16px;line-height:1.6;color:#36524D;">
+                  Solo tienes que tocar "Responder" - leo cada correo personalmente.
+                </p>
+                <p style="margin:0 0 2px 0;font-size:16px;line-height:1.5;color:#36524D;">Gracias,</p>
+                <p style="margin:0 0 12px 0;font-size:16px;line-height:1.5;color:#1E4541;font-weight:700;">Ana</p>
+                <p style="margin:0;font-size:14px;line-height:1.5;color:#1E4541;">
+                  <a
+                    href="https://www.savemydish.com"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style="color:#1E4541;text-decoration:underline;"
+                    >www.savemydish.com</a
+                  >
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 24px 24px 24px;">
+                <hr style="border:none;border-top:1px solid #E7EDE7;margin:14px 0 14px 0;" />
+                <p style="margin:0 0 10px 0;font-size:13px;line-height:1.5;color:#5F706E;">
+                  Para completar tu registro en SaveMyDish, confirma tu correo:
+                </p>
+                <table role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td align="center" style="border-radius:8px;background:#1E4541;">
+                      <a
+                        href="{{ .ConfirmationURL }}"
+                        style="display:inline-block;padding:10px 16px;color:#ffffff;font-weight:700;font-size:14px;text-decoration:none;"
+                        >Confirmar mi cuenta</a
+                      >
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

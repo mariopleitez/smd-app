@@ -217,6 +217,21 @@ To make "Recuperar contrasena" links work end-to-end:
    - current web origin (if not localhost)
    - fallback default: `https://smd-app-seven.vercel.app`
 
+## Welcome Email (Signup)
+
+To send your custom welcome email using your own SMTP (from `ana@savemydish.com`) on signup:
+
+1. In Supabase Dashboard -> Authentication -> Email -> SMTP Settings:
+   - Enable custom SMTP.
+   - Set sender email to `ana@savemydish.com`.
+2. In Supabase Dashboard -> Authentication -> Email Templates -> Confirm signup:
+   - Subject: `Bienvenid@ a SAVE MY DISH`
+   - Paste HTML from `supabase/email-templates/confirm-signup-welcome.html`
+3. Keep "Confirm email" enabled in Supabase Auth so this template is sent on each new signup.
+
+Note:
+- This template includes `{{ .ConfirmationURL }}` so users can verify their email and complete account activation.
+
 ## Supabase Database Setup
 
 Run SQL files in this order:
