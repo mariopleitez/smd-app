@@ -25,6 +25,10 @@ Current scope: auth, recipe management, private cookbooks, shopping list, and we
 - Shopping list per user (`shopping_items`), including recipe-origin metadata.
 - Weekly meal plan per user/day (`meal_plans`) with `breakfast_recipe_id`, `snack_recipe_id`, `lunch_recipe_id`, and `dinner_recipe_id`.
 - Per-user recipe feedback (`recipe_user_feedback`): cooked toggle, rating (0-5), and notes.
+- Account closure flow:
+  - Available from `Perfil` while editing profile
+  - Confirmation popup with irreversible warning
+  - Deletes user-owned data and user account, then logs out
 
 ## Screens and Functions (Main App)
 
@@ -77,6 +81,8 @@ The main app is orchestrated by `screens/PrincipalScreen.js`, with tab views spl
 
 - Shows signed-in user name/email.
 - Logout action.
+- Edit profile (name/photo).
+- `Cerrar Cuenta` action visible in edit mode, with destructive confirmation.
 
 ### `Top Card / Header`
 
@@ -105,6 +111,7 @@ The main app is orchestrated by `screens/PrincipalScreen.js`, with tab views spl
 - `supabase/functions/import-recipe-from-image/`: import recipe from image/OCR.
 - `supabase/functions/transcribe-recipe-audio/`: transcribe recorded audio dictation to text.
 - `supabase/functions/translate-recipe-content/`: detect recipe language and translate to Spanish when source is English.
+- `supabase/functions/delete-user-account/`: delete user-owned data + auth user account.
 
 ## Prerequisites
 
@@ -192,7 +199,7 @@ Run SQL files in this order:
 
 These scripts create tables, triggers, indexes, grants, and row-level-security policies.
 
-## Edge Function Setup (Recipe Import)
+## Edge Function Setup
 
 Deploy:
 
@@ -202,6 +209,7 @@ supabase functions deploy import-recipe-from-text --project-ref <your-project-re
 supabase functions deploy import-recipe-from-image --project-ref <your-project-ref>
 supabase functions deploy transcribe-recipe-audio --project-ref <your-project-ref>
 supabase functions deploy translate-recipe-content --project-ref <your-project-ref>
+supabase functions deploy delete-user-account --project-ref <your-project-ref>
 ```
 
 Optional AI-assisted extraction:
@@ -216,12 +224,15 @@ supabase secrets set OPENAI_TRANSLATE_MODEL=gpt-4.1-mini --project-ref <your-pro
 Notes:
 
 - `OPENAI_API_KEY` is optional. Without it, extraction may be reduced depending on source quality.
+- `SUPABASE_SERVICE_ROLE_KEY` is reserved by Supabase and available in Edge Functions runtime.
+- Do not run `supabase secrets set SUPABASE_SERVICE_ROLE_KEY=...` (CLI blocks `SUPABASE_*` names).
 - The app invokes:
   - `supabase.functions.invoke('import-recipe-from-url', ...)`
   - `supabase.functions.invoke('import-recipe-from-text', ...)`
   - `supabase.functions.invoke('import-recipe-from-image', ...)`
   - `supabase.functions.invoke('transcribe-recipe-audio', ...)`
   - `supabase.functions.invoke('translate-recipe-content', ...)`
+  - `supabase.functions.invoke('delete-user-account', ...)`
 
 ## Security Model
 

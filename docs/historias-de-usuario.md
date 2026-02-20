@@ -101,6 +101,7 @@ Documento vivo de funcionalidades actuales de la app, organizado por pantalla/fl
 | HU-088 | Perfil (tab) | Como usuario, quiero abrir ayuda (placeholder), para consultar soporte cuando lo necesite. |
 | HU-089 | Perfil (tab) | Como usuario, quiero abrir informacion de SaveMyDish Plus, para conocer proximas mejoras. |
 | HU-090 | Perfil (tab) | Como usuario, quiero cerrar sesion desde perfil, para proteger mi cuenta al terminar. |
+| HU-093 | Perfil (tab) | Como usuario, quiero cerrar mi cuenta desde modo editar perfil con una confirmacion irreversible, para borrar mi usuario y todo mi contenido de forma definitiva. |
 
 ## Notas
 - Este documento describe funcionalidades de interfaz y flujos de usuario actualmente implementados.
