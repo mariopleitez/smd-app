@@ -1,5 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Image, Modal, Share, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  Modal,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
@@ -27,6 +37,8 @@ export default function PerfilTabScreen({
   const [profileFeedback, setProfileFeedback] = useState('');
   const [profileFeedbackKind, setProfileFeedbackKind] = useState('info');
   const [isPlusModalVisible, setIsPlusModalVisible] = useState(false);
+  const [isDeleteAccountModalVisible, setIsDeleteAccountModalVisible] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   const feedbackTones = {
     success: {
@@ -165,6 +177,119 @@ export default function PerfilTabScreen({
     setIsPlusModalVisible(true);
   };
 
+  const getValidAccessToken = async () => {
+    if (!supabase) {
+      return null;
+    }
+
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      return null;
+    }
+
+    let accessToken = sessionData?.session?.access_token || '';
+    if (!accessToken) {
+      const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError) {
+        return null;
+      }
+      accessToken = refreshedData?.session?.access_token || '';
+    }
+
+    if (!accessToken) {
+      return null;
+    }
+
+    return accessToken;
+  };
+
+  const handleOpenDeleteAccountModal = () => {
+    if (isSavingProfile || isDeletingAccount) {
+      return;
+    }
+    setIsDeleteAccountModalVisible(true);
+  };
+
+  const handleCloseDeleteAccountModal = () => {
+    if (isDeletingAccount) {
+      return;
+    }
+    setIsDeleteAccountModalVisible(false);
+  };
+
+  const handleConfirmDeleteAccount = async () => {
+    if (isDeletingAccount) {
+      return;
+    }
+
+    if (!supabase || !isSupabaseConfigured) {
+      showFeedback('Configura Supabase para cerrar cuenta.', 'error');
+      setIsDeleteAccountModalVisible(false);
+      return;
+    }
+
+    setIsDeletingAccount(true);
+    setProfileFeedback('');
+    setProfileFeedbackKind('info');
+
+    try {
+      const accessToken = await getValidAccessToken();
+      if (!accessToken) {
+        showFeedback('Tu sesión expiró. Inicia sesión de nuevo para cerrar tu cuenta.', 'error');
+        return;
+      }
+
+      supabase.functions.setAuth(accessToken);
+      let { error, data } = await supabase.functions.invoke('delete-user-account', {
+        body: {},
+      });
+
+      if (error) {
+        const errorMessage = String(error?.message || '').toLowerCase();
+        const unauthorizedError =
+          errorMessage.includes('401') || errorMessage.includes('unauthorized');
+
+        if (unauthorizedError) {
+          const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
+          const refreshedToken = refreshedData?.session?.access_token || '';
+          if (!refreshError && refreshedToken) {
+            supabase.functions.setAuth(refreshedToken);
+            const retryResponse = await supabase.functions.invoke('delete-user-account', {
+              body: {},
+            });
+            error = retryResponse.error;
+            data = retryResponse.data;
+          }
+        }
+      }
+
+      if (error) {
+        showFeedback('No se pudo cerrar tu cuenta en este momento.', 'error');
+        return;
+      }
+
+      if (!data?.success) {
+        const backendMessage = String(data?.error || '').trim();
+        showFeedback(
+          backendMessage || 'No se pudo completar el cierre de cuenta.',
+          'error'
+        );
+        return;
+      }
+
+      setIsDeleteAccountModalVisible(false);
+      setProfileFeedback('');
+      setProfileFeedbackKind('info');
+      if (typeof onLogout === 'function') {
+        await Promise.resolve(onLogout());
+      }
+    } catch (_error) {
+      showFeedback('No se pudo cerrar tu cuenta en este momento.', 'error');
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
+
   const displayName = String(profileNameInput || '').trim() || resolvedName;
   const displayAvatar = String(profilePhotoInput || '').trim();
   const activeFeedbackTone = feedbackTones[profileFeedbackKind] || feedbackTones.info;
@@ -174,6 +299,32 @@ export default function PerfilTabScreen({
       <Text style={styles.title}>Perfil</Text>
       <Text style={styles.body}>Administra tu cuenta, tu foto y tus preferencias.</Text>
       <View style={styles.profileCard}>
+        {!isEditingProfile ? (
+          <TouchableOpacity
+            style={{
+              position: 'absolute',
+              top: 10,
+              right: 10,
+              zIndex: 4,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 5,
+              borderWidth: 1,
+              borderColor: '#D9E4F1',
+              borderRadius: 999,
+              backgroundColor: '#F7FAFF',
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+            }}
+            onPress={handleStartProfileEdit}
+            disabled={isSavingProfile || isDeletingAccount}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="create-outline" size={13} color="#4C648E" />
+            <Text style={{ color: '#4C648E', fontSize: 12, fontWeight: '600' }}>Editar</Text>
+          </TouchableOpacity>
+        ) : null}
+
         <TouchableOpacity
           style={styles.profilePhotoButton}
           onPress={() => {
@@ -212,32 +363,54 @@ export default function PerfilTabScreen({
         <Text style={styles.profileEmailText}>{userEmail || 'Sin correo'}</Text>
 
         {isEditingProfile ? (
-          <View style={styles.profileEditActions}>
+          <TouchableOpacity
+            style={{
+              alignSelf: 'center',
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              marginTop: -4,
+              marginBottom: 12,
+            }}
+            onPress={handleOpenDeleteAccountModal}
+            disabled={isDeletingAccount || isSavingProfile}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="trash-outline" size={15} color="#B9384E" />
+            <Text style={{ color: '#B9384E', fontSize: 13, fontWeight: '600' }}>Cerrar Cuenta</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {isEditingProfile ? (
+          <View style={localStyles.profileEditActionsRow}>
             <TouchableOpacity
-              style={[styles.secondaryAction, isSavingProfile && styles.buttonDisabled]}
+              style={[
+                localStyles.profileEditActionButton,
+                localStyles.profileEditCancelButton,
+                isSavingProfile && styles.buttonDisabled,
+              ]}
               onPress={handleCancelProfileEdit}
               disabled={isSavingProfile}
             >
-              <Text style={styles.secondaryActionText}>Cancelar</Text>
+              <Text style={localStyles.profileEditCancelText}>Cancelar</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.importButtonPrimary, isSavingProfile && styles.buttonDisabled]}
+              style={[
+                localStyles.profileEditActionButton,
+                localStyles.profileEditSaveButton,
+                isSavingProfile && styles.buttonDisabled,
+              ]}
               onPress={handleSaveProfile}
               disabled={isSavingProfile}
             >
               {isSavingProfile ? (
-                <ActivityIndicator size="small" color={styles.logoutText.color} />
+                <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
-                <Text style={styles.importButtonPrimaryText}>Guardar perfil</Text>
+                <Text style={localStyles.profileEditSaveText}>Guardar perfil</Text>
               )}
             </TouchableOpacity>
           </View>
-        ) : (
-          <TouchableOpacity style={styles.profileEditButton} onPress={handleStartProfileEdit}>
-            <Ionicons name="create-outline" size={16} color={styles.logoutText.color} />
-            <Text style={styles.logoutText}>Editar perfil</Text>
-          </TouchableOpacity>
-        )}
+        ) : null}
 
         {profileFeedback ? (
           <View
@@ -352,6 +525,126 @@ export default function PerfilTabScreen({
           </View>
         </View>
       </Modal>
+
+      <Modal
+        visible={isDeleteAccountModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={handleCloseDeleteAccountModal}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(20, 31, 51, 0.44)',
+            justifyContent: 'center',
+            paddingHorizontal: 24,
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: '#fff6f7',
+              borderRadius: 20,
+              borderWidth: 1,
+              borderColor: '#e4b8c0',
+              paddingHorizontal: 18,
+              paddingVertical: 18,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 20,
+                fontWeight: '800',
+                color: '#94273a',
+                marginBottom: 8,
+              }}
+            >
+              Cerrar Cuenta
+            </Text>
+            <Text
+              style={{
+                fontSize: 14,
+                lineHeight: 21,
+                color: '#5e1f2d',
+                marginBottom: 16,
+              }}
+            >
+              Esta acción eliminará tu cuenta y todo tu contenido (recetas, recetarios, plan, lista y
+              configuraciones). Esta acción no se puede deshacer.
+            </Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+              <TouchableOpacity
+                onPress={handleCloseDeleteAccountModal}
+                style={{
+                  borderWidth: 1,
+                  borderColor: '#c6d4e8',
+                  backgroundColor: '#ffffff',
+                  borderRadius: 12,
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                }}
+                disabled={isDeletingAccount}
+              >
+                <Text style={{ color: '#214f4b', fontWeight: '700' }}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  void handleConfirmDeleteAccount();
+                }}
+                style={{
+                  backgroundColor: '#b9384e',
+                  borderRadius: 12,
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                  minWidth: 148,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                disabled={isDeletingAccount}
+              >
+                {isDeletingAccount ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={{ color: '#ffffff', fontWeight: '700' }}>Si, borrar todo</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
+
+const localStyles = StyleSheet.create({
+  profileEditActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+  },
+  profileEditActionButton: {
+    flex: 1,
+    minHeight: 50,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  profileEditCancelButton: {
+    borderWidth: 1,
+    borderColor: '#C8D5E8',
+    backgroundColor: '#FFFFFF',
+  },
+  profileEditSaveButton: {
+    backgroundColor: '#7B94C4',
+  },
+  profileEditCancelText: {
+    color: '#385069',
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  profileEditSaveText: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+});

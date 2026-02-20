@@ -412,7 +412,11 @@ export default function App() {
 
   const handleLogout = async () => {
     if (supabase) {
-      await supabase.auth.signOut();
+      try {
+        await supabase.auth.signOut();
+      } catch (_signOutError) {
+        // Si la sesion ya no existe (ej. cuenta eliminada), igual cerramos estado local.
+      }
     }
     setSession(null);
     setScreen(SCREENS.COMENZAR);
