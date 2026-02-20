@@ -20,6 +20,7 @@ import LoginScreen from './screens/LoginScreen';
 import ComenzarScreen from './screens/ComenzarScreen';
 import RegistroScreen from './screens/RegistroScreen';
 import RecuperarContrasenaScreen from './screens/RecuperarContrasenaScreen';
+import RestablecerContrasenaScreen from './screens/RestablecerContrasenaScreen';
 import PrincipalScreen from './screens/PrincipalScreen';
 import SplashScreen from './screens/SplashScreen';
 import { palette } from './theme';
@@ -31,6 +32,7 @@ const SCREENS = Object.freeze({
   LOGIN: 'Login',
   REGISTRO: 'Registro',
   RECUPERAR: 'RecuperarContrasena',
+  RESTABLECER: 'RestablecerContrasena',
   PRINCIPAL: 'Principal',
 });
 
@@ -56,6 +58,39 @@ const getPasswordRecoveryRedirectUrl = () => {
   }
 
   return DEFAULT_PASSWORD_RECOVERY_REDIRECT_URL;
+};
+
+const hasRecoveryTypeInUrl = () => {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') {
+    return false;
+  }
+
+  try {
+    const searchParams = new URLSearchParams(window.location.search || '');
+    const hashParams = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
+    const recoveryType = searchParams.get('type') || hashParams.get('type');
+    return recoveryType === 'recovery';
+  } catch (_error) {
+    return false;
+  }
+};
+
+const clearAuthHashFromUrl = () => {
+  if (
+    Platform.OS !== 'web' ||
+    typeof window === 'undefined' ||
+    typeof document === 'undefined' ||
+    typeof history === 'undefined'
+  ) {
+    return;
+  }
+
+  if (!window.location.hash) {
+    return;
+  }
+
+  const cleanUrl = `${window.location.pathname}${window.location.search}`;
+  window.history.replaceState({}, document.title, cleanUrl);
 };
 
 const getStarterRecipesFromBundle = () => {
@@ -129,8 +164,12 @@ const normalizeStarterSteps = (recipe) => {
 };
 
 export default function App() {
+  const isPasswordRecoveryModeRef = useRef(hasRecoveryTypeInUrl());
   const [screen, setScreen] = useState(SCREENS.SPLASH);
   const [session, setSession] = useState(null);
+  const [isPasswordRecoveryMode, setIsPasswordRecoveryMode] = useState(
+    isPasswordRecoveryModeRef.current
+  );
   const [hasFinishedSplash, setHasFinishedSplash] = useState(false);
   const [starterRecipesRefreshToken, setStarterRecipesRefreshToken] = useState(0);
   const [starterOffer, setStarterOffer] = useState(null);
@@ -328,17 +367,25 @@ export default function App() {
         maybeOfferStarterRecipes(data.session.user);
       }
       if (hasFinishedSplash && data.session) {
-        setScreen(SCREENS.PRINCIPAL);
+        setScreen(isPasswordRecoveryModeRef.current ? SCREENS.RESTABLECER : SCREENS.PRINCIPAL);
       }
     });
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!isMounted) {
         return;
       }
 
+      const nextIsPasswordRecoveryMode =
+        event === 'PASSWORD_RECOVERY' ? true : nextSession ? isPasswordRecoveryModeRef.current : false;
+
       setSession(nextSession);
+      isPasswordRecoveryModeRef.current = nextIsPasswordRecoveryMode;
+      setIsPasswordRecoveryMode(nextIsPasswordRecoveryMode);
       supabase.functions.setAuth(nextSession?.access_token || '');
+      if (event === 'PASSWORD_RECOVERY') {
+        clearAuthHashFromUrl();
+      }
       if (nextSession?.user) {
         maybeOfferStarterRecipes(nextSession.user);
       } else {
@@ -348,7 +395,11 @@ export default function App() {
         setStarterOfferFeedback('');
       }
       if (hasFinishedSplash) {
-        setScreen(nextSession ? SCREENS.PRINCIPAL : SCREENS.COMENZAR);
+        if (nextSession && nextIsPasswordRecoveryMode) {
+          setScreen(SCREENS.RESTABLECER);
+        } else {
+          setScreen(nextSession ? SCREENS.PRINCIPAL : SCREENS.COMENZAR);
+        }
       }
     });
 
@@ -471,6 +522,55 @@ export default function App() {
     };
   };
 
+  const handleResetRecoveredPassword = async ({ password }) => {
+    if (!supabase) {
+      return {
+        ok: false,
+        message: 'Configura EXPO_PUBLIC_SUPABASE_URL y EXPO_PUBLIC_SUPABASE_ANON_KEY en .env.',
+      };
+    }
+
+    try {
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) {
+        return { ok: false, message: error.message };
+      }
+    } catch (unexpectedError) {
+      if (isStorageQuotaError(unexpectedError)) {
+        return {
+          ok: false,
+          message: 'El almacenamiento del navegador esta lleno. Limpia los datos del sitio y vuelve a intentar.',
+        };
+      }
+      return {
+        ok: false,
+        message:
+          unexpectedError instanceof Error
+            ? unexpectedError.message
+            : 'No fue posible actualizar la contraseña por un error inesperado.',
+      };
+    }
+
+    return {
+      ok: true,
+      message: 'Contraseña actualizada. Ahora inicia sesión con tu nueva contraseña.',
+    };
+  };
+
+  const handleBackToLoginAfterRecovery = async () => {
+    if (supabase) {
+      try {
+        await supabase.auth.signOut();
+      } catch (_signOutError) {
+        // no-op
+      }
+    }
+    setSession(null);
+    isPasswordRecoveryModeRef.current = false;
+    setIsPasswordRecoveryMode(false);
+    setScreen(SCREENS.LOGIN);
+  };
+
   const handleLogout = async () => {
     if (supabase) {
       try {
@@ -480,6 +580,8 @@ export default function App() {
       }
     }
     setSession(null);
+    isPasswordRecoveryModeRef.current = false;
+    setIsPasswordRecoveryMode(false);
     setScreen(SCREENS.COMENZAR);
   };
 
@@ -520,6 +622,14 @@ export default function App() {
             supabaseConfigured={isSupabaseConfigured}
           />
         );
+      case SCREENS.RESTABLECER:
+        return (
+          <RestablecerContrasenaScreen
+            onResetPassword={handleResetRecoveredPassword}
+            onBackToLogin={handleBackToLoginAfterRecovery}
+            supabaseConfigured={isSupabaseConfigured}
+          />
+        );
       case SCREENS.PRINCIPAL:
         return (
           <PrincipalScreen
@@ -536,6 +646,10 @@ export default function App() {
           <SplashScreen
             onFinish={() => {
               setHasFinishedSplash(true);
+              if (session && isPasswordRecoveryMode) {
+                navigateTo(SCREENS.RESTABLECER);
+                return;
+              }
               navigateTo(session ? SCREENS.PRINCIPAL : SCREENS.COMENZAR);
             }}
           />
