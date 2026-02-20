@@ -30,6 +30,7 @@ Documento vivo de funcionalidades actuales de la app, organizado por pantalla/fl
 | HU-019 | Onboarding inicial | Como usuario, quiero poder rechazar la oferta de recetas de bienvenida, para continuar sin cargar recetas. |
 | HU-020 | Navegacion principal | Como usuario, quiero navegar por tabs (Recetas, Plan, Lista, Perfil), para gestionar todas las funciones de la app. |
 | HU-021 | Navegacion principal | Como usuario, quiero un boton flotante de crear/importar, para agregar recetas desde cualquier momento. |
+| HU-092 | Navegacion principal | Como usuario, quiero una campana de notificaciones con contador no leido y poder cerrar cada notificacion individualmente, para mantener el panel limpio y relevante. |
 | HU-022 | Recetas (tab) | Como usuario, quiero ver todos mis recetarios, para organizar mis recetas por categorias. |
 | HU-023 | Recetas (tab) | Como usuario, quiero crear un nuevo recetario, para agrupar recetas segun mi criterio. |
 | HU-024 | Recetas (tab) | Como usuario, quiero abrir un recetario y ver sus recetas, para trabajar sobre su contenido. |
@@ -79,6 +80,7 @@ Documento vivo de funcionalidades actuales de la app, organizado por pantalla/fl
 | HU-068 | Ver receta propia | Como usuario, quiero seleccionar ingredientes de la receta y agregarlos a lista de compras, para planificar compras rapido. |
 | HU-069 | Ver receta externa | Como usuario, quiero ver recetas publicas de otros usuarios sin editarlas, para inspirarme y explorar. |
 | HU-070 | Ver receta externa | Como usuario, quiero copiar una receta externa a mis recetarios, para editarla como propia despues. |
+| HU-091 | Ver receta propia | Como usuario, quiero ver un boton para traducir cuando una receta este en ingles, para convertir titulo, descripcion, ingredientes y pasos al espanol. |
 | HU-071 | Plan (tab) | Como usuario, quiero ver mi semana de comidas, para planificar desayuno, snack, almuerzo y cena. |
 | HU-072 | Plan (tab) | Como usuario, quiero moverme entre semanas (anterior/siguiente), para revisar o planificar periodos distintos. |
 | HU-073 | Plan (tab) | Como usuario, quiero asignar receta a un dia completo o a un tiempo especifico de comida, para planificar con precision. |

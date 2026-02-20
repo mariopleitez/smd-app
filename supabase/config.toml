@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.transcribe-recipe-audio]
 verify_jwt = false
+
+[functions.translate-recipe-content]
+verify_jwt = false

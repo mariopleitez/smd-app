@@ -13,6 +13,15 @@ Current scope: auth, recipe management, private cookbooks, shopping list, and we
   - Pasted text (`import-recipe-from-text`)
   - Image/OCR (`import-recipe-from-image`)
   - Voice dictation (web speech on web + audio transcription in mobile via `transcribe-recipe-audio`)
+- AI language detection + translation in recipe detail:
+  - Detects recipe language with ChatGPT
+  - Shows `Traducir al espanol` only when the recipe is in English
+  - Translates title, description, ingredients, and steps (`translate-recipe-content`)
+- Top header notifications:
+  - Bell icon in the top card with unread badge
+  - Notification list panel
+  - Individual dismiss per notification
+  - Current default notification: `Tienes n recetas sin preparar...`
 - Shopping list per user (`shopping_items`), including recipe-origin metadata.
 - Weekly meal plan per user/day (`meal_plans`) with `breakfast_recipe_id`, `snack_recipe_id`, `lunch_recipe_id`, and `dinner_recipe_id`.
 - Per-user recipe feedback (`recipe_user_feedback`): cooked toggle, rating (0-5), and notes.
@@ -41,6 +50,7 @@ The main app is orchestrated by `screens/PrincipalScreen.js`, with tab views spl
   - Step-level photo support (`additional_photos`) and step reorder.
   - Add to cookbook, add ingredients to shopping list, add recipe to meal plan.
   - More menu (`...`) with export PDF and delete.
+  - Translation CTA below `...` when ChatGPT detects English content.
 - Recipe create/import sheet:
   - Browser URL import
   - Camera/image OCR import
@@ -68,6 +78,13 @@ The main app is orchestrated by `screens/PrincipalScreen.js`, with tab views spl
 - Shows signed-in user name/email.
 - Logout action.
 
+### `Top Card / Header`
+
+- Greets user with first name (`Hola, <nombre>`).
+- Uses app logo (`public/logo.png`) on the left side.
+- Shows notifications bell with unread count.
+- Opens a notifications panel with dismiss action per item.
+
 ## Tech Stack
 
 - Expo `^51`
@@ -87,6 +104,7 @@ The main app is orchestrated by `screens/PrincipalScreen.js`, with tab views spl
 - `supabase/functions/import-recipe-from-text/`: import recipe from pasted text.
 - `supabase/functions/import-recipe-from-image/`: import recipe from image/OCR.
 - `supabase/functions/transcribe-recipe-audio/`: transcribe recorded audio dictation to text.
+- `supabase/functions/translate-recipe-content/`: detect recipe language and translate to Spanish when source is English.
 
 ## Prerequisites
 
@@ -114,6 +132,14 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
 ```bash
 npm run start
 ```
+
+Open in Chrome:
+
+```bash
+open -a "Google Chrome" http://localhost:8081
+```
+
+If port `8081` is already in use, Expo will suggest another one (for example `8082`).
 
 Other scripts:
 
@@ -175,6 +201,7 @@ supabase functions deploy import-recipe-from-url --project-ref <your-project-ref
 supabase functions deploy import-recipe-from-text --project-ref <your-project-ref>
 supabase functions deploy import-recipe-from-image --project-ref <your-project-ref>
 supabase functions deploy transcribe-recipe-audio --project-ref <your-project-ref>
+supabase functions deploy translate-recipe-content --project-ref <your-project-ref>
 ```
 
 Optional AI-assisted extraction:
@@ -183,6 +210,7 @@ Optional AI-assisted extraction:
 supabase secrets set OPENAI_API_KEY=<your-openai-key> --project-ref <your-project-ref>
 supabase secrets set OPENAI_RECIPE_MODEL=gpt-4.1-mini --project-ref <your-project-ref>
 supabase secrets set OPENAI_TRANSCRIBE_MODEL=whisper-1 --project-ref <your-project-ref>
+supabase secrets set OPENAI_TRANSLATE_MODEL=gpt-4.1-mini --project-ref <your-project-ref>
 ```
 
 Notes:
@@ -193,6 +221,7 @@ Notes:
   - `supabase.functions.invoke('import-recipe-from-text', ...)`
   - `supabase.functions.invoke('import-recipe-from-image', ...)`
   - `supabase.functions.invoke('transcribe-recipe-audio', ...)`
+  - `supabase.functions.invoke('translate-recipe-content', ...)`
 
 ## Security Model
 

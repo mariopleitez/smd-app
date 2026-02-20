@@ -172,6 +172,7 @@ export default function PerfilTabScreen({
   return (
     <View>
       <Text style={styles.title}>Perfil</Text>
+      <Text style={styles.body}>Administra tu cuenta, tu foto y tus preferencias.</Text>
       <View style={styles.profileCard}>
         <TouchableOpacity
           style={styles.profilePhotoButton}

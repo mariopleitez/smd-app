@@ -108,6 +108,7 @@ export default function App() {
   const [screen, setScreen] = useState(SCREENS.SPLASH);
   const [session, setSession] = useState(null);
   const [hasFinishedSplash, setHasFinishedSplash] = useState(false);
+  const [starterRecipesRefreshToken, setStarterRecipesRefreshToken] = useState(0);
   const [starterOffer, setStarterOffer] = useState(null);
   const [starterOfferFeedback, setStarterOfferFeedback] = useState('');
   const [isAcceptingStarterOffer, setIsAcceptingStarterOffer] = useState(false);
@@ -267,6 +268,7 @@ export default function App() {
         return;
       }
 
+      setStarterRecipesRefreshToken((prevToken) => prevToken + 1);
       setStarterOffer(null);
     } finally {
       setIsAcceptingStarterOffer(false);
@@ -451,6 +453,7 @@ export default function App() {
             userId={session?.user?.id}
             userName={session?.user?.user_metadata?.full_name}
             userAvatar={session?.user?.user_metadata?.avatar_url}
+            starterRecipesRefreshToken={starterRecipesRefreshToken}
           />
         );
       default:

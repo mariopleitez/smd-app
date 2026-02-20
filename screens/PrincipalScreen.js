@@ -34,7 +34,34 @@ import ListaTabScreen from './main-tabs/ListaTabScreen';
 import PlanTabScreen from './main-tabs/PlanTabScreen';
 import PerfilTabScreen from './main-tabs/PerfilTabScreen';
 
-export default function PrincipalScreen({ onLogout, userEmail, userId, userName, userAvatar }) {
+const normalizeDetectedLanguage = (rawLanguage) => {
+  const normalized = String(rawLanguage || '')
+    .trim()
+    .toLowerCase();
+
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized.startsWith('en') || normalized === 'english' || normalized === 'ingles') {
+    return 'en';
+  }
+
+  if (normalized.startsWith('es') || normalized === 'spanish' || normalized === 'espanol') {
+    return 'es';
+  }
+
+  return normalized;
+};
+
+export default function PrincipalScreen({
+  onLogout,
+  userEmail,
+  userId,
+  userName,
+  userAvatar,
+  starterRecipesRefreshToken = 0,
+}) {
   const tabs = useMemo(
     () => [
       { key: 'recetas', label: 'Recetas', icon: 'restaurant-outline' },
@@ -90,6 +117,12 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
   const [recipeDetailMode, setRecipeDetailMode] = useState('view');
   const [recipeDetailFeedback, setRecipeDetailFeedback] = useState('');
   const [isSavingRecipeDetail, setIsSavingRecipeDetail] = useState(false);
+  const [isTranslatingRecipeDetail, setIsTranslatingRecipeDetail] = useState(false);
+  const [isDetectingRecipeDetailLanguage, setIsDetectingRecipeDetailLanguage] = useState(false);
+  const [recipeDetailDetectedLanguage, setRecipeDetailDetectedLanguage] = useState('');
+  const [isRecipeTranslateConfirmOpen, setIsRecipeTranslateConfirmOpen] = useState(false);
+  const [isSavingTranslatedRecipe, setIsSavingTranslatedRecipe] = useState(false);
+  const [pendingRecipeTranslation, setPendingRecipeTranslation] = useState(null);
   const [isDeletingRecipe, setIsDeletingRecipe] = useState(false);
   const [isRecipeMoreDropdownOpen, setIsRecipeMoreDropdownOpen] = useState(false);
   const [isRecipeMoreMenuOpen, setIsRecipeMoreMenuOpen] = useState(false);
@@ -151,6 +184,8 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
   const [recipeSearchResults, setRecipeSearchResults] = useState([]);
   const [isSearchingRecipes, setIsSearchingRecipes] = useState(false);
   const [recipeSearchFeedback, setRecipeSearchFeedback] = useState('');
+  const [isTopNotificationsOpen, setIsTopNotificationsOpen] = useState(false);
+  const [dismissedTopNotificationIds, setDismissedTopNotificationIds] = useState({});
   const [recipeCookedById, setRecipeCookedById] = useState({});
   const [recipeRatingById, setRecipeRatingById] = useState({});
   const [recipeNoteById, setRecipeNoteById] = useState({});
@@ -166,6 +201,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
   const cookbooksRef = useRef([]);
   const recipeDetailsCacheRef = useRef({});
   const recipeDetailRequestIdRef = useRef(0);
+  const recipeLanguageRequestIdRef = useRef(0);
   const speechRecognitionRef = useRef(null);
   const audioRecordingRef = useRef(null);
   useEffect(() => {
@@ -481,10 +517,77 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     }
   }, [activeTab, loadCookbooks]);
 
+  useEffect(() => {
+    if (!starterRecipesRefreshToken) {
+      return;
+    }
+
+    setSelectedRecipeForView(null);
+    setSelectedCookbookForView(null);
+    setActiveTab('recetas');
+    void loadCookbooks({ force: true });
+  }, [starterRecipesRefreshToken, loadCookbooks]);
+
+  useEffect(() => {
+    if (selectedRecipeForView) {
+      setIsTopNotificationsOpen(false);
+    }
+  }, [selectedRecipeForView]);
+
   const ownCookbooks = useMemo(
     () => cookbooks.filter((cookbook) => cookbook.owner_user_id === userId),
     [cookbooks, userId]
   );
+  const userRecipeIds = useMemo(() => {
+    const ownerId = String(userId || '');
+    if (!ownerId) {
+      return [];
+    }
+
+    const uniqueIds = new Set();
+    (Array.isArray(cookbooks) ? cookbooks : []).forEach((cookbook) => {
+      const recipes = Array.isArray(cookbook?.recipes) ? cookbook.recipes : [];
+      recipes.forEach((recipe) => {
+        if (String(recipe?.owner_user_id || '') !== ownerId || !recipe?.id) {
+          return;
+        }
+        uniqueIds.add(String(recipe.id));
+      });
+    });
+
+    return Array.from(uniqueIds);
+  }, [cookbooks, userId]);
+  const pendingRecipeCount = useMemo(() => {
+    if (userRecipeIds.length === 0) {
+      return 0;
+    }
+
+    const cookedCount = userRecipeIds.reduce(
+      (total, recipeId) => total + (Boolean(recipeCookedById[String(recipeId)]) ? 1 : 0),
+      0
+    );
+    return Math.max(0, userRecipeIds.length - cookedCount);
+  }, [recipeCookedById, userRecipeIds]);
+  const topNotifications = useMemo(() => {
+    const pendingLabel =
+      pendingRecipeCount === 1
+        ? 'Tienes 1 receta sin preparar...'
+        : `Tienes ${pendingRecipeCount} recetas sin preparar...`;
+    return [
+      {
+        id: 'pending-recipes',
+        message: pendingLabel,
+      },
+    ];
+  }, [pendingRecipeCount]);
+  const unreadTopNotifications = useMemo(
+    () =>
+      topNotifications.filter(
+        (notification) => !dismissedTopNotificationIds[String(notification.id)]
+      ),
+    [dismissedTopNotificationIds, topNotifications]
+  );
+  const unreadTopNotificationsCount = unreadTopNotifications.length;
   const profileDisplayName = useMemo(() => {
     const explicitName = String(userName || '').trim();
     if (explicitName) {
@@ -498,8 +601,90 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
 
     return '';
   }, [userEmail, userName]);
+  const profileFirstName = useMemo(() => {
+    const normalizedName = String(profileDisplayName || '').trim();
+    if (!normalizedName) {
+      return '';
+    }
+
+    const [firstName = ''] = normalizedName.split(/[\s._-]+/).filter(Boolean);
+    return firstName;
+  }, [profileDisplayName]);
+  const principalHeaderDateLabel = useMemo(() => {
+    try {
+      const formatted = new Intl.DateTimeFormat('es-ES', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+      }).format(new Date());
+      return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+    } catch (_formatError) {
+      return '';
+    }
+  }, []);
+  const principalHeaderSubtitle = useMemo(() => {
+    if (displayedTab === 'recetas') {
+      return 'Cocina con orden y guarda tus favoritas.';
+    }
+    if (displayedTab === 'plan') {
+      return 'Planifica tu semana con menos fricción.';
+    }
+    if (displayedTab === 'lista') {
+      return 'Tu compra, clara y lista para marcar.';
+    }
+    if (displayedTab === 'perfil') {
+      return 'Tu espacio personal en SaveMyDish.';
+    }
+    return 'Todo tu recetario en un solo lugar.';
+  }, [displayedTab]);
 
   const isAuthorRecipe = useCallback(() => false, []);
+  const handleDismissTopNotification = useCallback((notificationId) => {
+    const key = String(notificationId || '');
+    if (!key) {
+      return;
+    }
+
+    setDismissedTopNotificationIds((prevValue) => ({
+      ...prevValue,
+      [key]: true,
+    }));
+  }, []);
+
+  useEffect(() => {
+    if (!supabase || !isSupabaseConfigured || !userId || userRecipeIds.length === 0) {
+      return;
+    }
+
+    let isCancelled = false;
+    const loadCookedFeedbackForNotifications = async () => {
+      const { data, error } = await supabase
+        .from('recipe_user_feedback')
+        .select('recipe_id, is_cooked')
+        .eq('user_id', userId)
+        .in('recipe_id', userRecipeIds);
+
+      if (isCancelled || error) {
+        return;
+      }
+
+      setRecipeCookedById((prevValue) => {
+        const nextValue = { ...prevValue };
+        (data || []).forEach((row) => {
+          if (row?.recipe_id === undefined || row?.recipe_id === null) {
+            return;
+          }
+          nextValue[String(row.recipe_id)] = Boolean(row.is_cooked);
+        });
+        return nextValue;
+      });
+    };
+
+    void loadCookedFeedbackForNotifications();
+    return () => {
+      isCancelled = true;
+    };
+  }, [userId, userRecipeIds]);
 
   const getRecipeOwnerLabel = useCallback(
     (recipe) => {
@@ -1646,6 +1831,8 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
 
   const renderRecipeDetailView = () => {
     const isEditingRecipeDetail = recipeDetailMode === 'edit';
+    const canTranslateRecipeFromEnglish =
+      canEditSelectedRecipe && !isEditingRecipeDetail && recipeDetailDetectedLanguage === 'en';
     const recipeSourceUrl = String(selectedRecipeForView?.source_url || '').trim();
     const selectedRecipeIdKey = String(selectedRecipeForView?.id || '');
     const isRecipeMarkedCooked = Boolean(recipeCookedById[selectedRecipeIdKey]);
@@ -1753,6 +1940,37 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
             )
           ) : null}
         </View>
+
+        {canTranslateRecipeFromEnglish ? (
+          <View style={styles.recipeDetailTranslateRow}>
+            <TouchableOpacity
+              style={[
+                styles.recipeDetailTranslateButton,
+                (isTranslatingRecipeDetail ||
+                  isDeletingRecipe ||
+                  isDetectingRecipeDetailLanguage ||
+                  isRecipeTranslateConfirmOpen ||
+                  isSavingTranslatedRecipe) &&
+                  styles.buttonDisabled,
+              ]}
+              onPress={() => {
+                void handleTranslateRecipeDetailToSpanish();
+              }}
+              disabled={
+                isTranslatingRecipeDetail ||
+                isDeletingRecipe ||
+                isDetectingRecipeDetailLanguage ||
+                isRecipeTranslateConfirmOpen ||
+                isSavingTranslatedRecipe
+              }
+            >
+              <Ionicons name="language-outline" size={15} color={palette.accent} />
+              <Text style={styles.recipeDetailTranslateButtonText}>
+                {isTranslatingRecipeDetail ? 'Traduciendo...' : 'Traducir al español'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         <View style={styles.recipeDetailHero}>
           {isEditingRecipeDetail ? (
@@ -3220,6 +3438,40 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     }
   };
 
+  const handlePasteUrlFromClipboard = async () => {
+    try {
+      if (Platform.OS !== 'web') {
+        const clipboardText = await ExpoClipboard.getStringAsync();
+        const normalizedText = String(clipboardText || '').trim();
+        if (!normalizedText) {
+          setImportFeedback('El portapapeles está vacío.');
+          return;
+        }
+
+        setImportUrl(normalizedText);
+        setImportFeedback('');
+        return;
+      }
+
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
+        const clipboardText = await navigator.clipboard.readText();
+        const normalizedText = String(clipboardText || '').trim();
+        if (!normalizedText) {
+          setImportFeedback('El portapapeles está vacío.');
+          return;
+        }
+
+        setImportUrl(normalizedText);
+        setImportFeedback('');
+        return;
+      }
+
+      Alert.alert('Portapapeles', 'En este dispositivo, pega la URL manualmente en el campo.');
+    } catch (_error) {
+      setImportFeedback('No se pudo leer el portapapeles.');
+    }
+  };
+
   const handleImportRecipeFromPastedText = async () => {
     const rawText = pasteRecipeText.trim();
     if (!rawText) {
@@ -3501,6 +3753,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
       return;
     }
 
+    setIsRecipeMoreDropdownOpen(false);
     setRecipeDetailDraft(buildRecipeDetailDraft(selectedRecipeForView));
     setRecipeDetailMode('edit');
     setRecipeDetailFeedback('');
@@ -3511,10 +3764,12 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
       return;
     }
 
-    setRecipeDetailDraft(buildRecipeDetailDraft(selectedRecipeForView));
+    const resetDraft = buildRecipeDetailDraft(selectedRecipeForView);
+    setRecipeDetailDraft(resetDraft);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
     setIsSavingRecipeDetail(false);
+    void detectRecipeDetailLanguageWithAi(resetDraft, recipeDetailRequestIdRef.current);
   };
 
   const handleManualQuickAccess = (tabKey) => {
@@ -3537,12 +3792,19 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
 
   const closeCookbookRecipesView = () => {
     recipeDetailRequestIdRef.current += 1;
+    recipeLanguageRequestIdRef.current += 1;
     closePlanAssignModal();
     setSelectedCookbookForView(null);
     setSelectedRecipeForView(null);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
     setIsSavingRecipeDetail(false);
+    setIsTranslatingRecipeDetail(false);
+    setIsRecipeTranslateConfirmOpen(false);
+    setIsSavingTranslatedRecipe(false);
+    setPendingRecipeTranslation(null);
+    setIsDetectingRecipeDetailLanguage(false);
+    setRecipeDetailDetectedLanguage('');
     setIsRecipeCookbookPickerOpen(false);
     setRecipeCookbookSelectionIds([]);
     setIsSavingRecipeCookbookSelection(false);
@@ -3586,10 +3848,17 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
 
   const handleOpenCookbookRecipes = (cookbook) => {
     recipeDetailRequestIdRef.current += 1;
+    recipeLanguageRequestIdRef.current += 1;
     setSelectedCookbookForView(cookbook);
     setSelectedRecipeForView(null);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
+    setIsTranslatingRecipeDetail(false);
+    setIsRecipeTranslateConfirmOpen(false);
+    setIsSavingTranslatedRecipe(false);
+    setPendingRecipeTranslation(null);
+    setIsDetectingRecipeDetailLanguage(false);
+    setRecipeDetailDetectedLanguage('');
     setSelectedCookbookRecipeIds([]);
     setCookbookRecipeAction(null);
     setCookbookViewFeedback('');
@@ -3602,11 +3871,18 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
 
   const closeRecipeDetailView = () => {
     recipeDetailRequestIdRef.current += 1;
+    recipeLanguageRequestIdRef.current += 1;
     closePlanAssignModal();
     setSelectedRecipeForView(null);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
     setIsSavingRecipeDetail(false);
+    setIsTranslatingRecipeDetail(false);
+    setIsRecipeTranslateConfirmOpen(false);
+    setIsSavingTranslatedRecipe(false);
+    setPendingRecipeTranslation(null);
+    setIsDetectingRecipeDetailLanguage(false);
+    setRecipeDetailDetectedLanguage('');
     setIsRecipeMoreDropdownOpen(false);
     setIsDeletingRecipe(false);
     setIsRecipeMoreMenuOpen(false);
@@ -3630,7 +3906,13 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     setSelectedRecipeForView(recipe);
     setRecipeDetailMode('view');
     setRecipeDetailFeedback('');
-    setRecipeDetailDraft(buildRecipeDetailDraft(recipe));
+    setIsTranslatingRecipeDetail(false);
+    setRecipeDetailDetectedLanguage('');
+    const initialDraft = buildRecipeDetailDraft(recipe);
+    setRecipeDetailDraft(initialDraft);
+    if (String(recipe?.owner_user_id || '') === String(userId || '')) {
+      void detectRecipeDetailLanguageWithAi(initialDraft, requestId);
+    }
 
     const detailedRecipe = await ensureRecipeDetailsLoaded(recipe);
     if (!detailedRecipe) {
@@ -3642,7 +3924,11 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     }
 
     setSelectedRecipeForView(detailedRecipe);
-    setRecipeDetailDraft(buildRecipeDetailDraft(detailedRecipe));
+    const detailedDraft = buildRecipeDetailDraft(detailedRecipe);
+    setRecipeDetailDraft(detailedDraft);
+    if (String(detailedRecipe?.owner_user_id || '') === String(userId || '')) {
+      void detectRecipeDetailLanguageWithAi(detailedDraft, requestId);
+    }
   };
 
   const updateRecipeDraftIngredient = (targetIndex, value) => {
@@ -3802,6 +4088,334 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     return cleanDescription;
   };
 
+  const buildRecipeTranslationPayload = (draft) => {
+    const safeDraft = draft && typeof draft === 'object' ? draft : {};
+    const title = String(safeDraft.title || '').trim();
+    const description = String(safeDraft.description || '').trim();
+    const ingredients = (Array.isArray(safeDraft.ingredients) ? safeDraft.ingredients : [])
+      .map((item) => String(item || '').trim())
+      .filter((item) => item.length > 0);
+    const steps = (Array.isArray(safeDraft.steps) ? safeDraft.steps : [])
+      .map((item) => String(item || '').trim())
+      .filter((item) => item.length > 0);
+
+    return {
+      title,
+      description,
+      ingredients,
+      steps,
+    };
+  };
+
+  const detectRecipeDetailLanguageWithAi = async (draft, expectedRequestId = null) => {
+    if (!supabase || !isSupabaseConfigured || !userId) {
+      setRecipeDetailDetectedLanguage('');
+      return '';
+    }
+
+    const { title, description, ingredients, steps } = buildRecipeTranslationPayload(draft);
+    if (!title && !description && ingredients.length === 0 && steps.length === 0) {
+      setRecipeDetailDetectedLanguage('');
+      return '';
+    }
+
+    const nextLanguageRequestId = recipeLanguageRequestIdRef.current + 1;
+    recipeLanguageRequestIdRef.current = nextLanguageRequestId;
+    setIsDetectingRecipeDetailLanguage(true);
+
+    try {
+      const edgeAuthHeaders = await getEdgeFunctionAuthHeaders();
+      if (!edgeAuthHeaders) {
+        if (
+          expectedRequestId === null ||
+          Number(expectedRequestId) === Number(recipeDetailRequestIdRef.current)
+        ) {
+          setRecipeDetailDetectedLanguage('');
+        }
+        return '';
+      }
+
+      const { data, error } = await supabase.functions.invoke('translate-recipe-content', {
+        body: {
+          mode: 'detect',
+          title,
+          description,
+          ingredients,
+          steps,
+        },
+        headers: edgeAuthHeaders,
+      });
+
+      if (
+        nextLanguageRequestId !== recipeLanguageRequestIdRef.current ||
+        (expectedRequestId !== null &&
+          Number(expectedRequestId) !== Number(recipeDetailRequestIdRef.current))
+      ) {
+        return '';
+      }
+
+      if (error) {
+        setRecipeDetailDetectedLanguage('');
+        return '';
+      }
+
+      const detectedLanguage = normalizeDetectedLanguage(data?.detected_language || '');
+      setRecipeDetailDetectedLanguage(detectedLanguage);
+      return detectedLanguage;
+    } catch (_detectionError) {
+      if (
+        nextLanguageRequestId === recipeLanguageRequestIdRef.current &&
+        (expectedRequestId === null ||
+          Number(expectedRequestId) === Number(recipeDetailRequestIdRef.current))
+      ) {
+        setRecipeDetailDetectedLanguage('');
+      }
+      return '';
+    } finally {
+      if (
+        nextLanguageRequestId === recipeLanguageRequestIdRef.current &&
+        (expectedRequestId === null ||
+          Number(expectedRequestId) === Number(recipeDetailRequestIdRef.current))
+      ) {
+        setIsDetectingRecipeDetailLanguage(false);
+      }
+    }
+  };
+
+  const persistTranslatedRecipeDetail = async (translationPayload) => {
+    if (
+      !supabase ||
+      !isSupabaseConfigured ||
+      !selectedRecipeForView ||
+      !canEditSelectedRecipe ||
+      !translationPayload ||
+      typeof translationPayload !== 'object'
+    ) {
+      return false;
+    }
+
+    const translatedTitle = String(translationPayload.title || '').trim();
+    const translatedDescription = String(translationPayload.description || '').trim();
+    const translatedIngredients = (Array.isArray(translationPayload.ingredients)
+      ? translationPayload.ingredients
+      : []
+    )
+      .map((item) => String(item || '').trim())
+      .filter((item) => item.length > 0);
+    const translatedSteps = (Array.isArray(translationPayload.steps) ? translationPayload.steps : [])
+      .map((item) => String(item || '').trim())
+      .filter((item) => item.length > 0);
+
+    setIsSavingTranslatedRecipe(true);
+    setRecipeDetailFeedback('Guardando traducción...');
+
+    try {
+      const cleanStepPhotos = normalizeRecipeStepPhotos(
+        recipeDetailDraft.stepPhotos,
+        translatedSteps.length > 0 ? translatedSteps.length : 1
+      )
+        .map((item) => String(item || '').trim())
+        .slice(0, translatedSteps.length > 0 ? translatedSteps.length : 1);
+      const descriptionToSave = composeRecipeDescription(translatedDescription, translatedIngredients);
+      const instructionsToSave = translatedSteps.join('\n');
+
+      const { error: updateError } = await supabase
+        .from('recipes')
+        .update({
+          name: translatedTitle || selectedRecipeForView.name,
+          description: descriptionToSave,
+          main_photo_url: recipeDetailDraft.mainPhotoUrl || null,
+          additional_photos: cleanStepPhotos,
+          steps: translatedSteps,
+          instructions: instructionsToSave,
+          is_public: recipeDetailDraft.isPublic,
+        })
+        .eq('id', selectedRecipeForView.id)
+        .eq('owner_user_id', userId);
+
+      if (updateError) {
+        setRecipeDetailFeedback('La traducción se generó, pero no se pudo guardar.');
+        return false;
+      }
+
+      const syncedRecipe = {
+        ...selectedRecipeForView,
+        name: translatedTitle || selectedRecipeForView.name,
+        description: descriptionToSave,
+        main_photo_url: recipeDetailDraft.mainPhotoUrl || null,
+        additional_photos: cleanStepPhotos,
+        steps: translatedSteps,
+        instructions: instructionsToSave,
+        is_public: recipeDetailDraft.isPublic,
+      };
+
+      const updatedCookbook = await refreshCookbooksAndSelectedCookbook(selectedCookbookForView?.id);
+      if (updatedCookbook) {
+        const refreshedRecipe = (updatedCookbook.recipes || []).find(
+          (recipe) => String(recipe.id) === String(selectedRecipeForView.id)
+        );
+
+        if (refreshedRecipe) {
+          const mergedRecipe = {
+            ...refreshedRecipe,
+            ...syncedRecipe,
+          };
+          recipeDetailsCacheRef.current[String(mergedRecipe.id)] = mergedRecipe;
+          setSelectedRecipeForView(mergedRecipe);
+          setRecipeDetailDraft(buildRecipeDetailDraft(mergedRecipe));
+        }
+      } else {
+        recipeDetailsCacheRef.current[String(syncedRecipe.id)] = syncedRecipe;
+        setSelectedRecipeForView(syncedRecipe);
+        setRecipeDetailDraft(buildRecipeDetailDraft(syncedRecipe));
+      }
+
+      setRecipeDetailDetectedLanguage('es');
+      setRecipeDetailFeedback('Receta traducida al español correctamente.');
+      return true;
+    } catch (_saveTranslateError) {
+      setRecipeDetailFeedback('No se pudo guardar la traducción en este momento.');
+      return false;
+    } finally {
+      setIsSavingTranslatedRecipe(false);
+    }
+  };
+
+  const handleCancelRecipeTranslationSave = () => {
+    if (isSavingTranslatedRecipe) {
+      return;
+    }
+    setIsRecipeTranslateConfirmOpen(false);
+    setPendingRecipeTranslation(null);
+    setRecipeDetailFeedback('Traducción lista, pero no se guardaron cambios.');
+  };
+
+  const handleConfirmRecipeTranslationSave = async () => {
+    if (!pendingRecipeTranslation || isSavingTranslatedRecipe) {
+      return;
+    }
+
+    const didSave = await persistTranslatedRecipeDetail(pendingRecipeTranslation);
+    if (!didSave) {
+      return;
+    }
+
+    setIsRecipeTranslateConfirmOpen(false);
+    setPendingRecipeTranslation(null);
+  };
+
+  const handleTranslateRecipeDetailToSpanish = async () => {
+    if (
+      !supabase ||
+      !isSupabaseConfigured ||
+      !selectedRecipeForView ||
+      !canEditSelectedRecipe ||
+      recipeDetailMode !== 'view' ||
+      isTranslatingRecipeDetail ||
+      isRecipeTranslateConfirmOpen ||
+      isSavingTranslatedRecipe
+    ) {
+      return;
+    }
+
+    const { title, description, ingredients, steps } = buildRecipeTranslationPayload(recipeDetailDraft);
+    if (!title && !description && ingredients.length === 0 && steps.length === 0) {
+      setRecipeDetailFeedback('La receta no tiene contenido para traducir.');
+      return;
+    }
+
+    const edgeAuthHeaders = await getEdgeFunctionAuthHeaders();
+    if (!edgeAuthHeaders) {
+      setRecipeDetailFeedback('Tu sesión no es válida. Cierra sesión y vuelve a entrar.');
+      return;
+    }
+
+    setIsTranslatingRecipeDetail(true);
+    setRecipeDetailFeedback('Traduciendo receta...');
+
+    try {
+      const { data, error } = await supabase.functions.invoke('translate-recipe-content', {
+        body: {
+          mode: 'translate',
+          title,
+          description,
+          ingredients,
+          steps,
+          target_language: 'es',
+        },
+        headers: edgeAuthHeaders,
+      });
+
+      if (error) {
+        const detailedMessage = await resolveInvokeErrorMessage(
+          error,
+          'No se pudo traducir la receta.'
+        );
+        setRecipeDetailFeedback(detailedMessage);
+        return;
+      }
+
+      const detectedLanguage = normalizeDetectedLanguage(data?.detected_language || '');
+      setRecipeDetailDetectedLanguage(detectedLanguage);
+
+      if (!data?.translated || detectedLanguage !== 'en') {
+        setRecipeDetailFeedback('La receta no está en inglés. No se aplicaron cambios.');
+        return;
+      }
+
+      const nextTranslation = {
+        title: String(data?.title || title).trim(),
+        description: String(data?.description || description).trim(),
+        ingredients: (Array.isArray(data?.ingredients) ? data.ingredients : ingredients)
+          .map((item) => String(item || '').trim())
+          .filter((item) => item.length > 0),
+        steps: (Array.isArray(data?.steps) ? data.steps : steps)
+          .map((item) => String(item || '').trim())
+          .filter((item) => item.length > 0),
+      };
+
+      if (Platform.OS === 'web') {
+        setPendingRecipeTranslation(nextTranslation);
+        setIsRecipeTranslateConfirmOpen(true);
+        setRecipeDetailFeedback('Traducción lista. Confirma si deseas guardar los cambios.');
+        return;
+      }
+
+      const shouldSaveTranslatedText = await new Promise((resolve) => {
+        Alert.alert(
+          'Guardar traducción',
+          'Se tradujo título, descripción, ingredientes y pasos. ¿Deseas guardar estos cambios?',
+          [
+            {
+              text: 'No',
+              style: 'cancel',
+              onPress: () => resolve(false),
+            },
+            {
+              text: 'Sí, guardar',
+              onPress: () => resolve(true),
+            },
+          ],
+          {
+            cancelable: true,
+            onDismiss: () => resolve(false),
+          }
+        );
+      });
+
+      if (!shouldSaveTranslatedText) {
+        setRecipeDetailFeedback('Traducción lista, pero no se guardaron cambios.');
+        return;
+      }
+
+      await persistTranslatedRecipeDetail(nextTranslation);
+    } catch (_translateError) {
+      setRecipeDetailFeedback('No se pudo traducir la receta en este momento.');
+    } finally {
+      setIsTranslatingRecipeDetail(false);
+    }
+  };
+
   const handleSaveRecipeDetail = async () => {
     if (!supabase || !isSupabaseConfigured || !selectedRecipeForView || !canEditSelectedRecipe) {
       return;
@@ -3859,6 +4473,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
       is_public: recipeDetailDraft.isPublic,
     };
 
+    let recipeAfterSync = syncedRecipe;
     const updatedCookbook = await refreshCookbooksAndSelectedCookbook(selectedCookbookForView?.id);
     if (updatedCookbook) {
       const refreshedRecipe = (updatedCookbook.recipes || []).find(
@@ -3873,6 +4488,7 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
         recipeDetailsCacheRef.current[String(mergedRecipe.id)] = mergedRecipe;
         setSelectedRecipeForView(mergedRecipe);
         setRecipeDetailDraft(buildRecipeDetailDraft(mergedRecipe));
+        recipeAfterSync = mergedRecipe;
       }
     } else {
       recipeDetailsCacheRef.current[String(syncedRecipe.id)] = syncedRecipe;
@@ -3881,6 +4497,10 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     }
 
     setRecipeDetailMode('view');
+    void detectRecipeDetailLanguageWithAi(
+      buildRecipeDetailDraft(recipeAfterSync),
+      recipeDetailRequestIdRef.current
+    );
     setRecipeDetailFeedback('Receta actualizada correctamente.');
   };
 
@@ -4081,8 +4701,21 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
     setCookbookViewFeedback('Recetas movidas correctamente.');
   };
 
-  const handlePickManualPhoto = async () => {
-    if (Platform.OS !== 'web') {
+  const handlePickManualPhotoFromSource = async (sourceType = 'gallery') => {
+    if (sourceType === 'camera' && Platform.OS === 'web') {
+      setManualRecipeFeedback('La cámara no está disponible en web.');
+      return;
+    }
+
+    if (sourceType === 'camera' && Platform.OS !== 'web') {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (permission.status !== 'granted') {
+        setManualRecipeFeedback('Debes permitir acceso a la cámara para tomar foto.');
+        return;
+      }
+    }
+
+    if (sourceType !== 'camera' && Platform.OS !== 'web') {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (permission.status !== 'granted') {
         setManualRecipeFeedback('Debes permitir acceso a tus fotos para agregar imagen.');
@@ -4090,12 +4723,19 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
       }
     }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 0.65,
-      base64: true,
-    });
+    const result =
+      sourceType === 'camera'
+        ? await ImagePicker.launchCameraAsync({
+            allowsEditing: true,
+            quality: 0.65,
+            base64: true,
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            quality: 0.65,
+            base64: true,
+          });
 
     if (result.canceled || !result.assets?.length) {
       return;
@@ -4109,6 +4749,10 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
 
     setManualMainPhotoUrl(photoUrl);
     setManualRecipeFeedback('');
+  };
+
+  const handlePickManualPhoto = async () => {
+    await handlePickManualPhotoFromSource('gallery');
   };
 
   const handlePickRecipeDetailPhotoFromSource = async (sourceType = 'gallery') => {
@@ -4570,8 +5214,10 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
       setSelectedCookbookForView(parentCookbook || null);
       setCookbookRenameInput(parentCookbook?.name || '');
       setSelectedRecipeForView(syncedRecipe);
-      setRecipeDetailDraft(buildRecipeDetailDraft(syncedRecipe));
+      const syncedDraft = buildRecipeDetailDraft(syncedRecipe);
+      setRecipeDetailDraft(syncedDraft);
       setRecipeDetailMode('view');
+      void detectRecipeDetailLanguageWithAi(syncedDraft, recipeDetailRequestIdRef.current);
 
       if (hasOwnCookbooksAvailable) {
         setRecipeCookbookSelectionIds([]);
@@ -5168,9 +5814,81 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
 
   return (
     <View style={styles.screen}>
-      <View style={styles.mainLogoWrap}>
-        <Image source={require('../public/logo.png')} style={styles.mainLogo} resizeMode="contain" />
-      </View>
+      {!selectedRecipeForView ? (
+        <View style={styles.mainTopWrap}>
+          <View style={styles.mainTopCard}>
+            <TouchableOpacity
+              style={styles.mainTopBellButton}
+              onPress={() => setIsTopNotificationsOpen((prevValue) => !prevValue)}
+              activeOpacity={0.85}
+            >
+              <Ionicons
+                name={isTopNotificationsOpen ? 'notifications' : 'notifications-outline'}
+                size={18}
+                color={palette.accent}
+              />
+              {unreadTopNotificationsCount > 0 ? (
+                <View style={styles.mainTopBellBadge}>
+                  <Text style={styles.mainTopBellBadgeText}>
+                    {unreadTopNotificationsCount > 99
+                      ? '99+'
+                      : String(unreadTopNotificationsCount)}
+                  </Text>
+                </View>
+              ) : null}
+            </TouchableOpacity>
+
+            <View style={styles.mainTopRow}>
+              <View style={styles.mainTopBrandWrap}>
+                <Image
+                  source={require('../public/logo.png')}
+                  style={styles.mainTopBrandLogo}
+                  resizeMode="contain"
+                />
+              </View>
+
+              <View style={styles.mainTopTextWrap}>
+                {principalHeaderDateLabel ? (
+                  <Text style={styles.mainTopDateText}>{principalHeaderDateLabel}</Text>
+                ) : null}
+                <Text style={styles.mainTopGreetingText}>
+                  Hola, {profileFirstName || 'Chef'}
+                </Text>
+                <Text style={styles.mainTopSubtitleText}>{principalHeaderSubtitle}</Text>
+              </View>
+            </View>
+
+            {isTopNotificationsOpen ? (
+              <View style={styles.mainTopNotificationsPanel}>
+                <Text style={styles.mainTopNotificationsTitle}>Notificaciones</Text>
+                {unreadTopNotifications.length === 0 ? (
+                  <Text style={styles.mainTopNotificationsEmptyText}>
+                    No tienes notificaciones nuevas.
+                  </Text>
+                ) : (
+                  unreadTopNotifications.map((notification) => (
+                    <View key={notification.id} style={styles.mainTopNotificationItem}>
+                      <View style={styles.mainTopNotificationContent}>
+                        <Ionicons name="ellipse" size={7} color="#7A8BA3" />
+                        <Text style={styles.mainTopNotificationText}>{notification.message}</Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.mainTopNotificationCloseButton}
+                        onPress={() => handleDismissTopNotification(notification.id)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Cerrar notificación"
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="close" size={14} color="#7A8BA3" />
+                      </TouchableOpacity>
+                    </View>
+                  ))
+                )}
+              </View>
+            ) : null}
+          </View>
+        </View>
+      ) : null}
 
       <Animated.View
         style={{
@@ -5758,6 +6476,50 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
       </Modal>
 
       <Modal
+        visible={isRecipeTranslateConfirmOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={handleCancelRecipeTranslationSave}
+      >
+        <View style={styles.cameraImportOverlay}>
+          <Pressable
+            style={styles.cameraImportBackdrop}
+            onPress={handleCancelRecipeTranslationSave}
+          />
+          <View style={styles.recipeMoreMenuPopup}>
+            <Text style={styles.recipeDeleteConfirmTitle}>Guardar traducción</Text>
+            <Text style={styles.recipeDeleteConfirmText}>
+              Se tradujo título, descripción, ingredientes y pasos. ¿Deseas guardar estos cambios?
+            </Text>
+            <View style={styles.recipeDeleteConfirmActions}>
+              <TouchableOpacity
+                style={[styles.importButtonSecondary, isSavingTranslatedRecipe && styles.buttonDisabled]}
+                onPress={handleCancelRecipeTranslationSave}
+                disabled={isSavingTranslatedRecipe}
+              >
+                <Text style={styles.importButtonSecondaryText}>No</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.importButtonPrimary,
+                  styles.recipeDeleteConfirmButton,
+                  isSavingTranslatedRecipe && styles.buttonDisabled,
+                ]}
+                onPress={() => {
+                  void handleConfirmRecipeTranslationSave();
+                }}
+                disabled={isSavingTranslatedRecipe}
+              >
+                <Text style={styles.importButtonPrimaryText}>
+                  {isSavingTranslatedRecipe ? 'Guardando...' : 'Sí, guardar'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
         visible={isImportUrlModalOpen}
         animationType="fade"
         transparent
@@ -5775,6 +6537,16 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
                 Pega un enlace web o social (TikTok, Instagram, Pinterest). El sistema intentará extraer
                 nombre, fotos, descripción, ingredientes, pasos e instrucciones.
               </Text>
+
+              <View style={styles.pasteHeaderRow}>
+                <TouchableOpacity
+                  style={[styles.importButtonSecondary, isImportingRecipe && styles.buttonDisabled]}
+                  onPress={handlePasteUrlFromClipboard}
+                  disabled={isImportingRecipe}
+                >
+                  <Text style={styles.importButtonSecondaryText}>Pegar</Text>
+                </TouchableOpacity>
+              </View>
 
               <TextInput
                 style={styles.importInput}
@@ -5835,51 +6607,62 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.manualScreen}
         >
-          <View style={styles.manualHero}>
-            <View style={styles.manualHeroTop}>
-              <TouchableOpacity
-                style={styles.manualRoundIcon}
-                onPress={closeManualRecipeForm}
-              >
-                <Ionicons name="chevron-back" size={22} color={palette.card} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.manualShareAction}
-                onPress={() => {
-                  void handleShareRecipeLink(
-                    manualRecipeTitle || 'Receta',
-                    setManualRecipeFeedback
-                  );
-                }}
-              >
-                <Text style={styles.manualShareText}>Compartir</Text>
-                <Ionicons name="share-outline" size={18} color={palette.card} />
+          <View style={styles.manualHeaderShell}>
+            <View style={styles.recipeDetailTopRow}>
+              <TouchableOpacity style={styles.cookbookBackAction} onPress={closeManualRecipeForm}>
+                <Ionicons name="chevron-back" size={18} color={palette.accent} />
+                <Text style={styles.cookbookBackActionText}>Recetas</Text>
               </TouchableOpacity>
             </View>
-            <TouchableOpacity style={styles.manualHeroCenter} onPress={handlePickManualPhoto} activeOpacity={0.9}>
-              {manualMainPhotoUrl ? (
-                <Image
-                  source={{ uri: manualMainPhotoUrl }}
-                  style={styles.manualHeroPhoto}
-                  resizeMode="cover"
-                />
-              ) : (
-                <View style={styles.manualHeroPhotoPlaceholder}>
-                  <Ionicons name="add" size={48} color={palette.accent} />
-                  <Text style={styles.manualHeroPhotoHint}>Agregar foto</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          </View>
 
-          <View style={styles.manualTitleBar}>
-            <TextInput
-              style={styles.manualTitleInput}
-              value={manualRecipeTitle}
-              onChangeText={setManualRecipeTitle}
-              placeholder="Título..."
-              placeholderTextColor="#D6E2F2"
-            />
+            <View style={styles.recipeDetailHero}>
+              <TouchableOpacity style={styles.recipeDetailHeroTouchable} onPress={handlePickManualPhoto} activeOpacity={0.9}>
+                {manualMainPhotoUrl ? (
+                  <Image
+                    source={{ uri: manualMainPhotoUrl }}
+                    style={styles.recipeDetailHeroImage}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={styles.recipeDetailHeroPlaceholder}>
+                    <Ionicons name="image-outline" size={34} color={palette.accent} />
+                  </View>
+                )}
+                <View style={styles.recipeDetailPhotoQuickActions}>
+                  <TouchableOpacity
+                    style={[styles.recipeDetailPhotoQuickAction, isSavingManualRecipe && styles.buttonDisabled]}
+                    onPress={() => {
+                      void handlePickManualPhotoFromSource('camera');
+                    }}
+                    disabled={isSavingManualRecipe}
+                  >
+                    <Ionicons name="camera-outline" size={14} color={palette.accent} />
+                    <Text style={styles.recipeDetailPhotoQuickActionText}>Tomar foto</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.recipeDetailPhotoQuickAction, isSavingManualRecipe && styles.buttonDisabled]}
+                    onPress={() => {
+                      void handlePickManualPhotoFromSource('gallery');
+                    }}
+                    disabled={isSavingManualRecipe}
+                  >
+                    <Ionicons name="images-outline" size={14} color={palette.accent} />
+                    <Text style={styles.recipeDetailPhotoQuickActionText}>Elegir de galería</Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.recipeDetailTitleBar}>
+              <TextInput
+                style={styles.recipeDetailTitleInput}
+                value={manualRecipeTitle}
+                onChangeText={setManualRecipeTitle}
+                placeholder="Título..."
+                placeholderTextColor="#D6E2F2"
+                editable={!isSavingManualRecipe}
+              />
+            </View>
           </View>
 
           <ScrollView style={styles.manualBody} contentContainerStyle={styles.manualBodyContent}>
@@ -6191,169 +6974,176 @@ export default function PrincipalScreen({ onLogout, userEmail, userId, userName,
       >
         <View style={styles.cookbookPickerOverlay}>
           <Pressable style={styles.cookbookPickerBackdrop} onPress={closePlanAssignModal} />
-          <View style={styles.cookbookPickerPopup}>
+          <View style={[styles.cookbookPickerPopup, styles.planAssignPopup]}>
             <Text style={styles.cookbookPickerTitle}>Agregar al plan</Text>
             <Text style={styles.cookbookPickerSubtitle}>
               Selecciona fecha y tiempo de comida para esta receta.
             </Text>
 
-            {isPlanRecipeOptionsLoading ? (
-              <View style={styles.cookbookPickerLoadingWrap}>
-                <ActivityIndicator size="small" color={palette.accent} />
-              </View>
-            ) : planRecipeOptions.length === 0 ? (
-              <Text style={styles.cookbookPickerEmptyText}>
-                No tienes recetas disponibles para planificar.
-              </Text>
-            ) : (
-              <View style={styles.planRecipeOptionsWrap}>
-                <Text style={styles.planRecipeOptionsLabel}>Receta</Text>
-                <View style={styles.planRecipeSearchWrap}>
-                  <Ionicons name="search-outline" size={16} color={palette.mutedText} />
-                  <TextInput
-                    style={styles.planRecipeSearchInput}
-                    value={planRecipeSearchQuery}
-                    onChangeText={setPlanRecipeSearchQuery}
-                    placeholder="Buscar receta..."
-                    placeholderTextColor={palette.mutedText}
-                    editable={!isSavingPlanAssignment}
-                  />
+            <ScrollView
+              style={styles.planAssignScroll}
+              contentContainerStyle={styles.planAssignScrollContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {isPlanRecipeOptionsLoading ? (
+                <View style={styles.cookbookPickerLoadingWrap}>
+                  <ActivityIndicator size="small" color={palette.accent} />
                 </View>
-                <ScrollView style={styles.planRecipeOptionsList}>
-                  {filteredPlanRecipeOptions.map((recipe) => {
-                    const isSelected = String(recipe.id) === String(selectedPlanRecipeId);
+              ) : planRecipeOptions.length === 0 ? (
+                <Text style={styles.cookbookPickerEmptyText}>
+                  No tienes recetas disponibles para planificar.
+                </Text>
+              ) : (
+                <View style={styles.planRecipeOptionsWrap}>
+                  <Text style={styles.planRecipeOptionsLabel}>Receta</Text>
+                  <View style={styles.planRecipeSearchWrap}>
+                    <Ionicons name="search-outline" size={16} color={palette.mutedText} />
+                    <TextInput
+                      style={styles.planRecipeSearchInput}
+                      value={planRecipeSearchQuery}
+                      onChangeText={setPlanRecipeSearchQuery}
+                      placeholder="Buscar receta..."
+                      placeholderTextColor={palette.mutedText}
+                      editable={!isSavingPlanAssignment}
+                    />
+                  </View>
+                  <ScrollView style={styles.planRecipeOptionsList}>
+                    {filteredPlanRecipeOptions.map((recipe) => {
+                      const isSelected = String(recipe.id) === String(selectedPlanRecipeId);
 
-                    return (
-                      <TouchableOpacity
-                        key={`plan-recipe-option-${recipe.id}`}
-                        style={[
-                          styles.cookbookPickerItem,
-                          isSelected && styles.cookbookPickerItemSelected,
-                        ]}
-                        onPress={() => setSelectedPlanRecipeId(String(recipe.id))}
-                      >
-                        <Ionicons
-                          name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
-                          size={20}
-                          color={isSelected ? palette.button : '#8B9AAA'}
-                          style={styles.cookbookPickerItemIcon}
-                        />
-                        <View style={styles.cookbookPickerItemTextWrap}>
-                          <Text style={styles.cookbookPickerItemTitle}>{recipe.name}</Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                  {filteredPlanRecipeOptions.length === 0 ? (
-                    <Text style={styles.cookbookPickerEmptyText}>
-                      No hay recetas que coincidan con la búsqueda.
-                    </Text>
-                  ) : null}
-                </ScrollView>
-              </View>
-            )}
-
-            <Text style={styles.planAssignDateQuestion}>¿Para cuándo es?</Text>
-            <View style={styles.planAssignDateModeRow}>
-              {[
-                { key: 'today', label: 'Hoy' },
-                { key: 'tomorrow', label: 'Mañana' },
-                { key: 'custom', label: 'Seleccionar cuándo' },
-              ].map((option) => {
-                const isSelected = planAssignDateMode === option.key;
-                const isDisabled = option.key === 'today';
-                return (
-                  <TouchableOpacity
-                    key={`plan-date-mode-${option.key}`}
-                    style={[
-                      styles.planAssignDateModeButton,
-                      isSelected && styles.planAssignDateModeButtonSelected,
-                      (isSavingPlanAssignment || isDisabled) && styles.buttonDisabled,
-                    ]}
-                    onPress={() => handleSelectPlanAssignDateMode(option.key)}
-                    disabled={isSavingPlanAssignment || isDisabled}
-                  >
-                    <Text
-                      style={[
-                        styles.planAssignDateModeButtonText,
-                        isSelected && styles.planAssignDateModeButtonTextSelected,
-                      ]}
-                    >
-                      {option.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <Text style={styles.planAssignDateSelectedText}>Fecha: {planAssignDate || '-'}</Text>
-
-            {planAssignDateMode === 'custom' ? (
-              <View style={styles.planAssignDatePickerWrap}>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.planAssignDatePickerList}
-                >
-                  {planAssignCustomDateOptions.map((isoDate) => {
-                    const isSelected = planAssignDate === isoDate;
-                    return (
-                      <TouchableOpacity
-                        key={`plan-custom-date-${isoDate}`}
-                        style={[
-                          styles.planAssignDateChip,
-                          isSelected && styles.planAssignDateChipSelected,
-                          isSavingPlanAssignment && styles.buttonDisabled,
-                        ]}
-                        onPress={() => {
-                          setPlanAssignDate(isoDate);
-                          setPlanAssignFeedback('');
-                        }}
-                        disabled={isSavingPlanAssignment}
-                      >
-                        <Text
+                      return (
+                        <TouchableOpacity
+                          key={`plan-recipe-option-${recipe.id}`}
                           style={[
-                            styles.planAssignDateChipText,
-                            isSelected && styles.planAssignDateChipTextSelected,
+                            styles.cookbookPickerItem,
+                            isSelected && styles.cookbookPickerItemSelected,
                           ]}
+                          onPress={() => setSelectedPlanRecipeId(String(recipe.id))}
                         >
-                          {formatPlanAssignDateChipLabel(isoDate)}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-            ) : null}
+                          <Ionicons
+                            name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
+                            size={20}
+                            color={isSelected ? palette.button : '#8B9AAA'}
+                            style={styles.cookbookPickerItemIcon}
+                          />
+                          <View style={styles.cookbookPickerItemTextWrap}>
+                            <Text style={styles.cookbookPickerItemTitle}>{recipe.name}</Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                    {filteredPlanRecipeOptions.length === 0 ? (
+                      <Text style={styles.cookbookPickerEmptyText}>
+                        No hay recetas que coincidan con la búsqueda.
+                      </Text>
+                    ) : null}
+                  </ScrollView>
+                </View>
+              )}
 
-            <View style={styles.planAssignMealRow}>
-              {planMealOptions.map((option) => {
-                const isSelected = planAssignMealType === option.key;
-                return (
-                  <TouchableOpacity
-                    key={`meal-option-${option.key}`}
-                    style={[
-                      styles.planAssignMealButton,
-                      isSelected && styles.planAssignMealButtonSelected,
-                      isSavingPlanAssignment && styles.buttonDisabled,
-                    ]}
-                    onPress={() => setPlanAssignMealType(option.key)}
-                    disabled={isSavingPlanAssignment}
-                  >
-                    <Text
+              <Text style={styles.planAssignDateQuestion}>¿Para cuándo es?</Text>
+              <View style={styles.planAssignDateModeRow}>
+                {[
+                  { key: 'today', label: 'Hoy' },
+                  { key: 'tomorrow', label: 'Mañana' },
+                  { key: 'custom', label: 'Seleccionar cuándo' },
+                ].map((option) => {
+                  const isSelected = planAssignDateMode === option.key;
+                  const isDisabled = option.key === 'today';
+                  return (
+                    <TouchableOpacity
+                      key={`plan-date-mode-${option.key}`}
                       style={[
-                        styles.planAssignMealButtonText,
-                        isSelected && styles.planAssignMealButtonTextSelected,
+                        styles.planAssignDateModeButton,
+                        isSelected && styles.planAssignDateModeButtonSelected,
+                        (isSavingPlanAssignment || isDisabled) && styles.buttonDisabled,
                       ]}
+                      onPress={() => handleSelectPlanAssignDateMode(option.key)}
+                      disabled={isSavingPlanAssignment || isDisabled}
                     >
-                      {option.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+                      <Text
+                        style={[
+                          styles.planAssignDateModeButtonText,
+                          isSelected && styles.planAssignDateModeButtonTextSelected,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
 
-            {planAssignFeedback ? <Text style={styles.feedback}>{planAssignFeedback}</Text> : null}
+              <Text style={styles.planAssignDateSelectedText}>Fecha: {planAssignDate || '-'}</Text>
+
+              {planAssignDateMode === 'custom' ? (
+                <View style={styles.planAssignDatePickerWrap}>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.planAssignDatePickerList}
+                  >
+                    {planAssignCustomDateOptions.map((isoDate) => {
+                      const isSelected = planAssignDate === isoDate;
+                      return (
+                        <TouchableOpacity
+                          key={`plan-custom-date-${isoDate}`}
+                          style={[
+                            styles.planAssignDateChip,
+                            isSelected && styles.planAssignDateChipSelected,
+                            isSavingPlanAssignment && styles.buttonDisabled,
+                          ]}
+                          onPress={() => {
+                            setPlanAssignDate(isoDate);
+                            setPlanAssignFeedback('');
+                          }}
+                          disabled={isSavingPlanAssignment}
+                        >
+                          <Text
+                            style={[
+                              styles.planAssignDateChipText,
+                              isSelected && styles.planAssignDateChipTextSelected,
+                            ]}
+                          >
+                            {formatPlanAssignDateChipLabel(isoDate)}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              ) : null}
+
+              <View style={styles.planAssignMealRow}>
+                {planMealOptions.map((option) => {
+                  const isSelected = planAssignMealType === option.key;
+                  return (
+                    <TouchableOpacity
+                      key={`meal-option-${option.key}`}
+                      style={[
+                        styles.planAssignMealButton,
+                        isSelected && styles.planAssignMealButtonSelected,
+                        isSavingPlanAssignment && styles.buttonDisabled,
+                      ]}
+                      onPress={() => setPlanAssignMealType(option.key)}
+                      disabled={isSavingPlanAssignment}
+                    >
+                      <Text
+                        style={[
+                          styles.planAssignMealButtonText,
+                          isSelected && styles.planAssignMealButtonTextSelected,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {planAssignFeedback ? <Text style={styles.feedback}>{planAssignFeedback}</Text> : null}
+            </ScrollView>
 
             <View style={styles.cookbookPickerActions}>
               <TouchableOpacity
@@ -6518,19 +7308,158 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: palette.background,
   },
-  mainLogoWrap: {
+  mainTopWrap: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  mainTopCard: {
+    position: 'relative',
+    borderRadius: 24,
+    backgroundColor: 'rgba(250, 252, 255, 0.94)',
+    borderWidth: 1,
+    borderColor: '#D9E5F0',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    shadowColor: '#0B1F1A',
+    shadowOpacity: 0.1,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
+  },
+  mainTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  mainTopTextWrap: {
+    flex: 1,
+    paddingRight: 44,
+  },
+  mainTopBellButton: {
+    position: 'absolute',
+    right: spacing.md,
+    top: spacing.sm,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: '#C9D8E8',
+    backgroundColor: '#F6FAFF',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: spacing.sm,
+    zIndex: 4,
   },
-  mainLogo: {
-    width: 224,
-    height: 72,
+  mainTopBellBadge: {
+    position: 'absolute',
+    right: -4,
+    top: -5,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#7894C0',
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  mainTopBellBadgeText: {
+    color: '#FFFFFF',
+    fontFamily: fonts.bold,
+    fontSize: 9,
+    lineHeight: 10,
+  },
+  mainTopNotificationsPanel: {
+    marginTop: spacing.sm,
+    borderWidth: 1,
+    borderColor: '#D5E2F0',
+    borderRadius: 14,
+    backgroundColor: '#F9FCFF',
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    gap: 8,
+  },
+  mainTopNotificationsTitle: {
+    color: palette.accent,
+    fontFamily: fonts.semiBold,
+    fontSize: 12,
+  },
+  mainTopNotificationItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  mainTopNotificationContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  mainTopNotificationCloseButton: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: '#D5E2F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  mainTopNotificationText: {
+    flex: 1,
+    color: '#5C6D83',
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  mainTopNotificationsEmptyText: {
+    color: '#6F7F93',
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  mainTopDateText: {
+    color: '#7D8B9D',
+    fontFamily: fonts.medium,
+    fontSize: 12,
+    marginBottom: 3,
+  },
+  mainTopGreetingText: {
+    color: palette.accent,
+    fontFamily: fonts.semiBold,
+    fontSize: 24,
+    lineHeight: 28,
+    marginBottom: 4,
+  },
+  mainTopSubtitleText: {
+    color: '#657488',
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  mainTopBrandWrap: {
+    width: 84,
+    height: 84,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#C8D7E8',
+    backgroundColor: '#EEF5FF',
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 8,
+  },
+  mainTopBrandLogo: {
+    width: '100%',
+    height: '100%',
   },
   contentArea: {
     flexGrow: 1,
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.xl,
+    paddingTop: spacing.lg,
     paddingBottom: 148,
   },
   title: {
@@ -7299,6 +8228,26 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     zIndex: 25,
   },
+  recipeDetailTranslateRow: {
+    alignItems: 'flex-end',
+    marginBottom: spacing.sm,
+  },
+  recipeDetailTranslateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#C6D4E8',
+    backgroundColor: '#FAFCFF',
+  },
+  recipeDetailTranslateButtonText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 12,
+  },
   recipeDetailEditActions: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -8040,6 +8989,16 @@ const styles = StyleSheet.create({
     borderColor: '#DCE6EC',
     maxHeight: '75%',
   },
+  planAssignPopup: {
+    maxHeight: '82%',
+  },
+  planAssignScroll: {
+    flexGrow: 0,
+    marginBottom: spacing.md,
+  },
+  planAssignScrollContent: {
+    paddingBottom: 2,
+  },
   cookbookPickerTitle: {
     color: palette.accent,
     fontFamily: fonts.semiBold,
@@ -8235,6 +9194,10 @@ const styles = StyleSheet.create({
   manualScreen: {
     flex: 1,
     backgroundColor: palette.background,
+  },
+  manualHeaderShell: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xl,
   },
   manualHero: {
     height: 320,

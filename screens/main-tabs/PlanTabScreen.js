@@ -22,6 +22,7 @@ export default function PlanTabScreen({
   return (
     <View>
       <Text style={styles.title}>Plan de comidas</Text>
+      <Text style={styles.body}>Organiza tu semana y decide qué cocinar cada día.</Text>
 
       <View style={styles.planWeekHeader}>
         <TouchableOpacity
@@ -159,4 +160,3 @@ export default function PlanTabScreen({
     </View>
   );
 }
-
