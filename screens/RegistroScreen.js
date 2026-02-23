@@ -1,17 +1,29 @@
 import React, { useState } from 'react';
-import { Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Image, Linking, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AppButton from '../components/AppButton';
 import ScreenContainer from '../components/ScreenContainer';
 import { fonts, palette, spacing } from '../theme';
 
+const TERMS_URL = 'https://landing.savemydish.com';
+
 export default function RegistroScreen({ onRegister, onGoLogin, onBack, supabaseConfigured }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [feedback, setFeedback] = useState({ message: '', type: 'error' });
+
+  const handleOpenTerms = () => {
+    Linking.openURL(TERMS_URL).catch(() => {
+      setFeedback({
+        message: 'No fue posible abrir los términos y condiciones.',
+        type: 'error',
+      });
+    });
+  };
 
   const handleSubmit = async () => {
     const safeName = name.trim();
@@ -27,9 +39,19 @@ export default function RegistroScreen({ onRegister, onGoLogin, onBack, supabase
       return;
     }
 
+    if (!acceptedTerms) {
+      setFeedback({ message: 'Debes aceptar los términos y condiciones para continuar.', type: 'error' });
+      return;
+    }
+
     setIsLoading(true);
     setFeedback({ message: '', type: 'error' });
-    const result = await onRegister({ name: safeName, email: safeEmail, password });
+    const result = await onRegister({
+      name: safeName,
+      email: safeEmail,
+      password,
+      acceptedTerms,
+    });
     setIsLoading(false);
 
     if (!result.ok) {
@@ -97,6 +119,27 @@ export default function RegistroScreen({ onRegister, onGoLogin, onBack, supabase
               color={palette.mutedText}
             />
           </TouchableOpacity>
+        </View>
+        <View style={styles.termsRow}>
+          <TouchableOpacity
+            onPress={() => setAcceptedTerms((current) => !current)}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: acceptedTerms }}
+            accessibilityLabel="Aceptar términos y condiciones"
+            style={styles.termsCheckbox}
+          >
+            <Ionicons
+              name={acceptedTerms ? 'checkbox' : 'square-outline'}
+              size={22}
+              color={acceptedTerms ? palette.button : palette.mutedText}
+            />
+          </TouchableOpacity>
+          <Text style={styles.termsText}>
+            Acepto los{' '}
+            <Text style={styles.termsLink} onPress={handleOpenTerms} accessibilityRole="link">
+              términos y condiciones
+            </Text>
+          </Text>
         </View>
       </View>
 
@@ -179,6 +222,27 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     justifyContent: 'center',
+  },
+  termsRow: {
+    marginTop: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  termsCheckbox: {
+    marginTop: 1,
+  },
+  termsText: {
+    marginLeft: 10,
+    flex: 1,
+    color: palette.text,
+    fontFamily: fonts.regular,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  termsLink: {
+    color: palette.button,
+    fontFamily: fonts.medium,
+    textDecorationLine: 'underline',
   },
   feedback: {
     color: '#B42318',

@@ -453,11 +453,18 @@ export default function App() {
     return { ok: true };
   };
 
-  const handleRegister = async ({ name, email, password }) => {
+  const handleRegister = async ({ name, email, password, acceptedTerms }) => {
     if (!supabase) {
       return {
         ok: false,
         message: 'Configura EXPO_PUBLIC_SUPABASE_URL y EXPO_PUBLIC_SUPABASE_ANON_KEY en .env.',
+      };
+    }
+
+    if (!acceptedTerms) {
+      return {
+        ok: false,
+        message: 'Debes aceptar los términos y condiciones para crear tu cuenta.',
       };
     }
 
@@ -467,6 +474,8 @@ export default function App() {
       options: {
         data: {
           full_name: name,
+          accepted_terms: true,
+          accepted_terms_at: new Date().toISOString(),
         },
       },
     });
