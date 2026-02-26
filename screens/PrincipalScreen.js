@@ -103,6 +103,7 @@ export default function PrincipalScreen({
   const [isManualRecipeModalOpen, setIsManualRecipeModalOpen] = useState(false);
   const [manualRecipeTitle, setManualRecipeTitle] = useState('');
   const [manualMainPhotoUrl, setManualMainPhotoUrl] = useState('');
+  const [manualAdditionalPhotos, setManualAdditionalPhotos] = useState([]);
   const [manualRecipeDescription, setManualRecipeDescription] = useState('');
   const [manualIngredients, setManualIngredients] = useState(['']);
   const [manualSteps, setManualSteps] = useState(['']);
@@ -166,10 +167,11 @@ export default function PrincipalScreen({
     description: '',
     ingredients: [''],
     steps: [''],
-    stepPhotos: [''],
+    stepPhotos: [],
     mainPhotoUrl: '',
     isPublic: false,
   });
+  const [recipeSlideshowIndex, setRecipeSlideshowIndex] = useState(0);
   const [selectedCookbookRecipeIds, setSelectedCookbookRecipeIds] = useState([]);
   const [cookbookRecipeAction, setCookbookRecipeAction] = useState(null);
   const [cookbookViewFeedback, setCookbookViewFeedback] = useState('');
@@ -540,6 +542,10 @@ export default function PrincipalScreen({
     }
   }, [selectedRecipeForView]);
 
+  useEffect(() => {
+    setRecipeSlideshowIndex(0);
+  }, [selectedRecipeForView?.id]);
+
   const ownCookbooks = useMemo(
     () => cookbooks.filter((cookbook) => cookbook.owner_user_id === userId),
     [cookbooks, userId]
@@ -858,7 +864,7 @@ export default function PrincipalScreen({
     return [];
   };
 
-  const normalizeRecipeStepPhotos = (additionalPhotos, stepCount) => {
+  const normalizeRecipeAdditionalPhotos = (additionalPhotos) => {
     let sourcePhotos = additionalPhotos;
     if (typeof additionalPhotos === 'string') {
       try {
@@ -869,20 +875,17 @@ export default function PrincipalScreen({
       }
     }
 
-    const normalizedSource = Array.isArray(sourcePhotos)
-      ? sourcePhotos.map((item) => String(item || '').trim())
+    return Array.isArray(sourcePhotos)
+      ? sourcePhotos
+          .map((item) => String(item || '').trim())
+          .filter((item) => item.length > 0)
       : [];
-    const targetCount = Math.max(1, Number(stepCount) || 0);
-    return Array.from({ length: targetCount }, (_, index) => normalizedSource[index] || '');
   };
 
   const buildRecipeDetailDraft = (recipe) => {
     const { descriptionText, ingredients } = splitRecipeDescription(recipe?.description || '');
     const normalizedSteps = normalizeRecipeSteps(recipe?.steps, recipe?.instructions);
-    const normalizedStepPhotos = normalizeRecipeStepPhotos(
-      recipe?.additional_photos,
-      normalizedSteps.length > 0 ? normalizedSteps.length : 1
-    );
+    const normalizedStepPhotos = normalizeRecipeAdditionalPhotos(recipe?.additional_photos);
 
     return {
       title: recipe?.name || '',
@@ -901,12 +904,7 @@ export default function PrincipalScreen({
     }
 
     const normalizedSteps = normalizeRecipeSteps(recipe?.steps, recipe?.instructions);
-    const normalizedStepPhotos = normalizeRecipeStepPhotos(
-      recipe?.additional_photos,
-      normalizedSteps.length > 0 ? normalizedSteps.length : 1
-    )
-      .map((item) => String(item || '').trim())
-      .slice(0, normalizedSteps.length > 0 ? normalizedSteps.length : 1);
+    const normalizedStepPhotos = normalizeRecipeAdditionalPhotos(recipe?.additional_photos);
 
     return {
       ...recipe,
@@ -1878,9 +1876,20 @@ export default function PrincipalScreen({
       const isRecipeMarkedCooked = Boolean(recipeCookedById[selectedRecipeIdKey]);
       const recipeRating = Number(recipeRatingById[selectedRecipeIdKey] || 0);
       const recipeNote = String(recipeNoteById[selectedRecipeIdKey] || '');
-      const recipeHeroContent = recipeDetailDraft.mainPhotoUrl ? (
+      const additionalPhotoUrls = normalizeRecipeAdditionalPhotos(recipeDetailDraft.stepPhotos);
+      const recipeSlideshowPhotos = [
+        String(recipeDetailDraft.mainPhotoUrl || '').trim(),
+        ...additionalPhotoUrls,
+      ].filter((photoUrl, index, photoList) => Boolean(photoUrl) && photoList.indexOf(photoUrl) === index);
+      const currentSlideshowIndex = recipeSlideshowPhotos.length
+        ? Math.min(recipeSlideshowIndex, recipeSlideshowPhotos.length - 1)
+        : 0;
+      const recipeHeroPhotoUrl = isEditingRecipeDetail
+        ? String(recipeDetailDraft.mainPhotoUrl || '').trim()
+        : recipeSlideshowPhotos[currentSlideshowIndex] || '';
+      const recipeHeroContent = recipeHeroPhotoUrl ? (
         <Image
-          source={{ uri: recipeDetailDraft.mainPhotoUrl }}
+          source={{ uri: recipeHeroPhotoUrl }}
           style={styles.recipeDetailHeroImage}
           resizeMode="cover"
         />
@@ -2040,9 +2049,97 @@ export default function PrincipalScreen({
               </View>
             </View>
           ) : (
-            <View style={styles.recipeDetailHeroTouchable}>{recipeHeroContent}</View>
+            <View style={styles.recipeDetailHeroTouchable}>
+              {recipeHeroContent}
+              {recipeSlideshowPhotos.length > 1 ? (
+                <View style={styles.recipeSlideshowControls}>
+                  <TouchableOpacity
+                    style={styles.recipeSlideshowArrow}
+                    onPress={() =>
+                      setRecipeSlideshowIndex((prevIndex) =>
+                        prevIndex <= 0 ? recipeSlideshowPhotos.length - 1 : prevIndex - 1
+                      )
+                    }
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="chevron-back" size={18} color={palette.card} />
+                  </TouchableOpacity>
+                  <Text style={styles.recipeSlideshowCounter}>
+                    {currentSlideshowIndex + 1}/{recipeSlideshowPhotos.length}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.recipeSlideshowArrow}
+                    onPress={() =>
+                      setRecipeSlideshowIndex((prevIndex) =>
+                        prevIndex >= recipeSlideshowPhotos.length - 1 ? 0 : prevIndex + 1
+                      )
+                    }
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="chevron-forward" size={18} color={palette.card} />
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </View>
           )}
         </View>
+
+        {isEditingRecipeDetail ? (
+          <View style={styles.additionalPhotosSection}>
+            <View style={styles.additionalPhotosHeader}>
+              <Text style={styles.additionalPhotosTitle}>Fotos adicionales</Text>
+              <View style={styles.additionalPhotosActions}>
+                <TouchableOpacity
+                  style={[styles.recipeDetailPhotoQuickAction, isSavingRecipeDetail && styles.buttonDisabled]}
+                  onPress={() => {
+                    void handlePickRecipeDetailAdditionalPhotoFromSource('camera');
+                  }}
+                  disabled={isSavingRecipeDetail}
+                >
+                  <Ionicons name="camera-outline" size={14} color={palette.accent} />
+                  <Text style={styles.recipeDetailPhotoQuickActionText}>Tomar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.recipeDetailPhotoQuickAction, isSavingRecipeDetail && styles.buttonDisabled]}
+                  onPress={() => {
+                    void handlePickRecipeDetailAdditionalPhoto();
+                  }}
+                  disabled={isSavingRecipeDetail}
+                >
+                  <Ionicons name="images-outline" size={14} color={palette.accent} />
+                  <Text style={styles.recipeDetailPhotoQuickActionText}>Galería</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {additionalPhotoUrls.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.additionalPhotosList}
+              >
+                {additionalPhotoUrls.map((photoUrl, photoIndex) => (
+                  <View key={`detail-additional-photo-${photoIndex}`} style={styles.additionalPhotoTile}>
+                    <Image
+                      source={{ uri: photoUrl }}
+                      style={styles.additionalPhotoTileImage}
+                      resizeMode="cover"
+                    />
+                    <TouchableOpacity
+                      style={[styles.additionalPhotoRemoveButton, isSavingRecipeDetail && styles.buttonDisabled]}
+                      onPress={() => handleRemoveRecipeDetailAdditionalPhoto(photoIndex)}
+                      disabled={isSavingRecipeDetail}
+                    >
+                      <Ionicons name="close" size={12} color={palette.card} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+            ) : (
+              <Text style={styles.additionalPhotosEmptyText}>Aún no hay fotos adicionales.</Text>
+            )}
+          </View>
+        ) : null}
 
         <View style={styles.recipeDetailTitleBar}>
           {isEditingRecipeDetail ? (
@@ -3288,13 +3385,17 @@ export default function PrincipalScreen({
             mimeType = 'audio/webm';
           }
 
-          const { data, error } = await supabase.functions.invoke('transcribe-recipe-audio', {
-            body: {
-              audio_base64: base64Audio,
-              mime_type: mimeType,
-            },
-            headers: edgeAuthHeaders,
-          });
+          const { data, error } = await withTimeout(
+            supabase.functions.invoke('transcribe-recipe-audio', {
+              body: {
+                audio_base64: base64Audio,
+                mime_type: mimeType,
+              },
+              headers: edgeAuthHeaders,
+            }),
+            60000,
+            'La transcripción tardó demasiado. Intenta nuevamente.'
+          );
 
           if (error) {
             const detailedMessage = await resolveInvokeErrorMessage(
@@ -3387,6 +3488,224 @@ export default function PrincipalScreen({
     return detailedMessage;
   };
 
+  const IMPORT_REQUEST_TIMEOUT_MS = 90000;
+  const IMPORT_OPEN_EDITOR_TIMEOUT_MS = 30000;
+  const IMPORT_PICKER_TIMEOUT_MS = 45000;
+  const IMPORT_IMAGE_READ_TIMEOUT_MS = 20000;
+  const CLIPBOARD_READ_TIMEOUT_MS = 8000;
+  const MAX_IMPORT_IMAGE_FILE_BYTES = 10 * 1024 * 1024;
+
+  async function withTimeout(promise, timeoutMs, timeoutMessage) {
+    let timeoutHandle = null;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(new Error(timeoutMessage || 'La operación tardó demasiado.'));
+      }, timeoutMs);
+    });
+
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
+  }
+
+  const persistImportedRecipeFallback = async (rawRecipe, sourceUrl = '') => {
+    if (!supabase || !isSupabaseConfigured || !userId || !rawRecipe || typeof rawRecipe !== 'object') {
+      return null;
+    }
+
+    const recipeName = String(rawRecipe?.name || rawRecipe?.title || '').trim();
+    const rawIngredients = Array.isArray(rawRecipe?.ingredients) ? rawRecipe.ingredients : [];
+    const cleanIngredients = rawIngredients
+      .map((item) => String(item || '').trim())
+      .filter((item) => item.length > 0);
+    const rawDescription = String(rawRecipe?.description || '').trim();
+    const descriptionToSave = composeRecipeDescription(rawDescription, cleanIngredients);
+    const cleanSteps = normalizeRecipeSteps(rawRecipe?.steps, rawRecipe?.instructions);
+    const additionalPhotos = normalizeRecipeAdditionalPhotos(
+      rawRecipe?.additional_photos ?? rawRecipe?.step_photos ?? rawRecipe?.photos ?? []
+    );
+    const mainPhotoUrl = String(
+      rawRecipe?.main_photo_url || rawRecipe?.mainPhotoUrl || rawRecipe?.photo_url || ''
+    ).trim();
+    const normalizedSourceUrl = String(sourceUrl || rawRecipe?.source_url || '').trim();
+
+    if (!recipeName && !descriptionToSave && cleanSteps.length === 0) {
+      return null;
+    }
+
+    const { data: insertedRecipe, error: insertError } = await supabase
+      .from('recipes')
+      .insert({
+        owner_user_id: userId,
+        name: recipeName || 'Receta importada',
+        description: descriptionToSave || '',
+        main_photo_url: mainPhotoUrl || null,
+        additional_photos: additionalPhotos,
+        steps: cleanSteps,
+        instructions: cleanSteps.join('\n'),
+        is_public: false,
+        source_url: normalizedSourceUrl || null,
+      })
+      .select(
+        'id, owner_user_id, name, description, main_photo_url, additional_photos, steps, instructions, is_public, source_url'
+      )
+      .single();
+
+    if (insertError || !insertedRecipe) {
+      return null;
+    }
+
+    return insertedRecipe;
+  };
+
+  const extractImportedRecipeFromPayload = (payload, fallbackSourceUrl = '') => {
+    if (!payload || typeof payload !== 'object') {
+      return null;
+    }
+
+    const candidatePool = [
+      payload?.recipe,
+      payload?.data?.recipe,
+      payload?.result?.recipe,
+      payload?.recipe_data,
+      payload?.extraction,
+      payload,
+    ];
+
+    for (const candidate of candidatePool) {
+      if (!candidate || typeof candidate !== 'object') {
+        continue;
+      }
+
+      const recipeName = String(candidate?.name || candidate?.title || '').trim();
+      const rawIngredients = Array.isArray(candidate?.ingredients)
+        ? candidate.ingredients
+        : typeof candidate?.ingredients === 'string'
+          ? String(candidate.ingredients)
+              .split(/\r?\n|;|,/)
+              .map((item) => String(item || '').trim())
+              .filter((item) => item.length > 0)
+          : [];
+      const ingredients = rawIngredients
+        .map((item) => String(item || '').trim())
+        .filter((item) => item.length > 0);
+      const description = String(candidate?.description || candidate?.summary || '').trim();
+      const steps = normalizeRecipeSteps(candidate?.steps, candidate?.instructions);
+      const instructions = String(
+        candidate?.instructions || (steps.length > 0 ? steps.join('\n') : '')
+      ).trim();
+      const mainPhotoUrl = String(
+        candidate?.main_photo_url || candidate?.mainPhotoUrl || candidate?.photo_url || ''
+      ).trim();
+      const additionalPhotos = normalizeRecipeAdditionalPhotos(
+        candidate?.additional_photos ?? candidate?.step_photos ?? candidate?.photos ?? candidate?.images ?? []
+      );
+      const sourceUrl = String(
+        fallbackSourceUrl || candidate?.source_url || candidate?.sourceUrl || ''
+      ).trim();
+      const candidateId = candidate?.id ?? candidate?.recipe_id ?? candidate?.recipeId ?? null;
+      const hasCoreData =
+        Boolean(candidateId) ||
+        Boolean(recipeName) ||
+        Boolean(description) ||
+        ingredients.length > 0 ||
+        steps.length > 0 ||
+        Boolean(mainPhotoUrl) ||
+        additionalPhotos.length > 0;
+
+      if (!hasCoreData) {
+        continue;
+      }
+
+      return {
+        id: candidateId,
+        name: recipeName,
+        description,
+        ingredients,
+        steps,
+        instructions,
+        main_photo_url: mainPhotoUrl,
+        additional_photos: additionalPhotos,
+        source_url: sourceUrl,
+      };
+    }
+
+    return null;
+  };
+
+  const resolveImageImportBase64 = async (selectedAsset) => {
+    const directBase64 = String(selectedAsset?.base64 || '').trim();
+    if (directBase64) {
+      return directBase64;
+    }
+
+    const assetUri = String(selectedAsset?.uri || '').trim();
+    if (!assetUri) {
+      return '';
+    }
+
+    if (assetUri.startsWith('data:')) {
+      const commaIndex = assetUri.indexOf(',');
+      if (commaIndex >= 0) {
+        return assetUri.slice(commaIndex + 1).trim();
+      }
+    }
+
+    if (Platform.OS === 'web') {
+      return '';
+    }
+
+    const fileInfo = await withTimeout(
+      FileSystem.getInfoAsync(assetUri, { size: true }),
+      IMPORT_IMAGE_READ_TIMEOUT_MS,
+      'No se pudo leer la imagen seleccionada.'
+    );
+    if (!fileInfo?.exists) {
+      return '';
+    }
+
+    const fileSize = Number(fileInfo?.size || 0);
+    if (fileSize > MAX_IMPORT_IMAGE_FILE_BYTES) {
+      throw new Error('La imagen es demasiado grande. Intenta con una foto de menor tamaño.');
+    }
+
+    const fileBase64 = await withTimeout(
+      FileSystem.readAsStringAsync(assetUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      }),
+      IMPORT_IMAGE_READ_TIMEOUT_MS,
+      'Leer la imagen tardó demasiado. Intenta con otra foto.'
+    );
+
+    return String(fileBase64 || '').trim();
+  };
+
+  const readClipboardTextSafely = async () => {
+    if (Platform.OS !== 'web') {
+      const rawText = await withTimeout(
+        ExpoClipboard.getStringAsync(),
+        CLIPBOARD_READ_TIMEOUT_MS,
+        'La lectura del portapapeles tardó demasiado.'
+      );
+      return String(rawText || '').trim();
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
+      const rawText = await withTimeout(
+        navigator.clipboard.readText(),
+        CLIPBOARD_READ_TIMEOUT_MS,
+        'La lectura del portapapeles tardó demasiado.'
+      );
+      return String(rawText || '').trim();
+    }
+
+    return '';
+  };
+
   const importRecipeFromTextPayload = async (rawText, setFeedback) => {
     if (!supabase || !isSupabaseConfigured || !userId) {
       setFeedback('Debes iniciar sesión y configurar Supabase para importar.');
@@ -3408,83 +3727,88 @@ export default function PrincipalScreen({
     setIsImportingRecipe(true);
     setFeedback('Leyendo...');
 
-    let data;
-    let error;
     try {
-      const response = await supabase.functions.invoke('import-recipe-from-text', {
-        body: {
-          text: normalizedText,
-        },
-        headers: edgeAuthHeaders,
-      });
-      data = response.data;
-      error = response.error;
-    } catch (invokeError) {
-      setIsImportingRecipe(false);
-      setFeedback(invokeError instanceof Error ? invokeError.message : 'Error al procesar el texto.');
-      return false;
-    }
-
-    setIsImportingRecipe(false);
-
-    if (error) {
-      const detailedMessage = await resolveInvokeErrorMessage(
-        error,
-        'No se pudo importar la receta desde texto.'
+      const response = await withTimeout(
+        supabase.functions.invoke('import-recipe-from-text', {
+          body: {
+            text: normalizedText,
+          },
+          headers: edgeAuthHeaders,
+        }),
+        IMPORT_REQUEST_TIMEOUT_MS,
+        'La importación tardó demasiado. Intenta nuevamente.'
       );
-      setFeedback(detailedMessage);
-      return false;
-    }
+      const data = response?.data;
+      const error = response?.error;
 
-    if (data?.error) {
-      setFeedback(String(data.error));
-      return false;
-    }
+      if (error) {
+        const detailedMessage = await resolveInvokeErrorMessage(
+          error,
+          'No se pudo importar la receta desde texto.'
+        );
+        setFeedback(detailedMessage);
+        return false;
+      }
 
-    const importedRecipeId = data?.recipe?.id;
-    if (!importedRecipeId) {
-      setFeedback('Se procesó el texto, pero no se pudo abrir la receta.');
-      return false;
-    }
+      if (data?.error) {
+        setFeedback(String(data.error));
+        return false;
+      }
 
-    const openedInEditor = await openRecipeInManualEditForm(importedRecipeId, data?.recipe || null);
-    if (!openedInEditor) {
-      setFeedback('Se importó la receta, pero no se pudo abrir en modo edición.');
-      return false;
-    }
+      let importedRecipeFallback = extractImportedRecipeFromPayload(data);
+      let importedRecipeId = importedRecipeFallback?.id || null;
 
-    return true;
+      if (!importedRecipeId && importedRecipeFallback) {
+        setFeedback('Guardando receta importada...');
+        const savedRecipe = await persistImportedRecipeFallback(importedRecipeFallback);
+        if (savedRecipe?.id) {
+          importedRecipeFallback = savedRecipe;
+          importedRecipeId = savedRecipe.id;
+        }
+      }
+
+      if (!importedRecipeId) {
+        setFeedback('Se procesó el texto, pero no se pudo abrir la receta.');
+        return false;
+      }
+
+      const openedInEditor = await withTimeout(
+        openRecipeInManualEditForm(importedRecipeId, importedRecipeFallback),
+        IMPORT_OPEN_EDITOR_TIMEOUT_MS,
+        'La receta se importó, pero abrir el editor tardó demasiado.'
+      );
+      if (!openedInEditor) {
+        setFeedback('Se importó la receta, pero no se pudo abrir en modo edición.');
+        return false;
+      }
+
+      return true;
+    } catch (importError) {
+      setFeedback(
+        importError instanceof Error
+          ? importError.message
+          : 'Error inesperado al procesar la importación.'
+      );
+      return false;
+    } finally {
+      setIsImportingRecipe(false);
+    }
   };
 
   const handlePasteFromClipboard = async () => {
     try {
-      if (Platform.OS !== 'web') {
-        const clipboardText = await ExpoClipboard.getStringAsync();
-        const normalizedText = String(clipboardText || '').trim();
-        if (!normalizedText) {
-          setPasteRecipeFeedback('El portapapeles está vacío.');
+      const normalizedText = await readClipboardTextSafely();
+      if (!normalizedText) {
+        if (Platform.OS === 'web') {
+          Alert.alert('Portapapeles', 'En este dispositivo, pega el texto manualmente en el campo.');
           return;
         }
-
-        setPasteRecipeText(normalizedText);
-        setPasteRecipeFeedback('');
+        setPasteRecipeFeedback('El portapapeles está vacío.');
         return;
       }
 
-      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
-        const clipboardText = await navigator.clipboard.readText();
-        const normalizedText = String(clipboardText || '').trim();
-        if (!normalizedText) {
-          setPasteRecipeFeedback('El portapapeles está vacío.');
-          return;
-        }
-
-        setPasteRecipeText(normalizedText);
-        setPasteRecipeFeedback('');
-        return;
-      }
-
-      Alert.alert('Portapapeles', 'En este dispositivo, pega el texto manualmente en el campo.');
+      setPasteRecipeText(normalizedText);
+      setPasteRecipeFeedback('');
     } catch (_error) {
       setPasteRecipeFeedback('No se pudo leer el portapapeles.');
     }
@@ -3492,33 +3816,18 @@ export default function PrincipalScreen({
 
   const handlePasteUrlFromClipboard = async () => {
     try {
-      if (Platform.OS !== 'web') {
-        const clipboardText = await ExpoClipboard.getStringAsync();
-        const normalizedText = String(clipboardText || '').trim();
-        if (!normalizedText) {
-          setImportFeedback('El portapapeles está vacío.');
+      const normalizedText = await readClipboardTextSafely();
+      if (!normalizedText) {
+        if (Platform.OS === 'web') {
+          Alert.alert('Portapapeles', 'En este dispositivo, pega la URL manualmente en el campo.');
           return;
         }
-
-        setImportUrl(normalizedText);
-        setImportFeedback('');
+        setImportFeedback('El portapapeles está vacío.');
         return;
       }
 
-      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
-        const clipboardText = await navigator.clipboard.readText();
-        const normalizedText = String(clipboardText || '').trim();
-        if (!normalizedText) {
-          setImportFeedback('El portapapeles está vacío.');
-          return;
-        }
-
-        setImportUrl(normalizedText);
-        setImportFeedback('');
-        return;
-      }
-
-      Alert.alert('Portapapeles', 'En este dispositivo, pega la URL manualmente en el campo.');
+      setImportUrl(normalizedText);
+      setImportFeedback('');
     } catch (_error) {
       setImportFeedback('No se pudo leer el portapapeles.');
     }
@@ -3617,12 +3926,16 @@ export default function PrincipalScreen({
           }
         }
 
-        pickerResult = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
-          allowsEditing: true,
-          quality: 0.7,
-          base64: true,
-        });
+        pickerResult = await withTimeout(
+          ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            quality: 0.7,
+            base64: Platform.OS === 'web',
+          }),
+          IMPORT_PICKER_TIMEOUT_MS,
+          'La selección de imagen tardó demasiado. Intenta de nuevo.'
+        );
       } else {
         if (Platform.OS !== 'web') {
           const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -3632,11 +3945,15 @@ export default function PrincipalScreen({
           }
         }
 
-        pickerResult = await ImagePicker.launchCameraAsync({
-          allowsEditing: true,
-          quality: 0.7,
-          base64: true,
-        });
+        pickerResult = await withTimeout(
+          ImagePicker.launchCameraAsync({
+            allowsEditing: true,
+            quality: 0.7,
+            base64: Platform.OS === 'web',
+          }),
+          IMPORT_PICKER_TIMEOUT_MS,
+          'Abrir la cámara tardó demasiado. Intenta nuevamente.'
+        );
       }
 
       if (!pickerResult || pickerResult.canceled || !pickerResult.assets?.length) {
@@ -3644,12 +3961,6 @@ export default function PrincipalScreen({
       }
 
       const selectedAsset = pickerResult.assets[0];
-      const imageBase64 = String(selectedAsset.base64 || '').trim();
-      if (!imageBase64) {
-        Alert.alert('Importar receta', 'No se pudo procesar la imagen. Intenta con otra foto.');
-        return;
-      }
-
       const mimeType = selectedAsset.mimeType || 'image/jpeg';
 
       const edgeAuthHeaders = await getEdgeFunctionAuthHeaders();
@@ -3659,34 +3970,32 @@ export default function PrincipalScreen({
       }
 
       setIsImportingRecipe(true);
-      setImageImportProgressText('Leyendo Imagen...');
+      setImageImportProgressText('Leyendo imagen...');
 
-      let data;
-      let error;
-      try {
-        const response = await supabase.functions.invoke('import-recipe-from-image', {
+      const imageBase64 = await resolveImageImportBase64(selectedAsset);
+      if (!imageBase64) {
+        Alert.alert('Importar receta', 'No se pudo leer la imagen. Intenta con otra foto.');
+        return;
+      }
+
+      setImageImportProgressText('Analizando imagen...');
+
+      const response = await withTimeout(
+        supabase.functions.invoke('import-recipe-from-image', {
           body: {
             image_base64: imageBase64,
             mime_type: mimeType,
             source_type: sourceType,
           },
           headers: edgeAuthHeaders,
-        });
-        data = response.data;
-        error = response.error;
-      } catch (invokeError) {
-        setIsImportingRecipe(false);
-        setImageImportProgressText('');
-        Alert.alert(
-          'Importar receta',
-          invokeError instanceof Error ? invokeError.message : 'Error al analizar la imagen.'
-        );
-        return;
-      }
+        }),
+        IMPORT_REQUEST_TIMEOUT_MS,
+        'El análisis de imagen tardó demasiado. Intenta nuevamente.'
+      );
+      const data = response?.data;
+      const error = response?.error;
 
       if (error) {
-        setIsImportingRecipe(false);
-        setImageImportProgressText('');
         let detailedMessage = error.message || 'No se pudo importar la receta desde imagen.';
         let statusCode = 0;
         let payloadCode = '';
@@ -3726,8 +4035,6 @@ export default function PrincipalScreen({
       }
 
       if (data?.error) {
-        setIsImportingRecipe(false);
-        setImageImportProgressText('');
         const failureAlert = buildImageImportFailureAlert({
           statusCode: 0,
           payloadCode: data?.code,
@@ -3738,18 +4045,29 @@ export default function PrincipalScreen({
         return;
       }
 
-      const importedRecipeId = data?.recipe?.id;
+      let importedRecipeFallback = extractImportedRecipeFromPayload(data);
+      let importedRecipeId = importedRecipeFallback?.id || null;
+
+      if (!importedRecipeId && importedRecipeFallback) {
+        setImageImportProgressText('Guardando receta...');
+        const savedRecipe = await persistImportedRecipeFallback(importedRecipeFallback);
+        if (savedRecipe?.id) {
+          importedRecipeFallback = savedRecipe;
+          importedRecipeId = savedRecipe.id;
+        }
+      }
+
       if (!importedRecipeId) {
-        setIsImportingRecipe(false);
-        setImageImportProgressText('');
         Alert.alert('Importar receta', 'La receta se analizó, pero no se pudo abrir.');
         return;
       }
 
-      setImageImportProgressText('Leyendo Imagen...');
-      const openedInEditor = await openRecipeInManualEditForm(importedRecipeId, data?.recipe || null);
-      setIsImportingRecipe(false);
-      setImageImportProgressText('');
+      setImageImportProgressText('Abriendo receta...');
+      const openedInEditor = await withTimeout(
+        openRecipeInManualEditForm(importedRecipeId, importedRecipeFallback),
+        IMPORT_OPEN_EDITOR_TIMEOUT_MS,
+        'La receta se importó, pero abrir el editor tardó demasiado.'
+      );
       if (!openedInEditor) {
         Alert.alert(
           'Importar receta',
@@ -3757,14 +4075,15 @@ export default function PrincipalScreen({
         );
       }
     } catch (unexpectedError) {
-      setIsImportingRecipe(false);
-      setImageImportProgressText('');
       Alert.alert(
         'Importar receta',
         unexpectedError instanceof Error
           ? unexpectedError.message
           : 'Ocurrió un error inesperado al procesar la imagen.'
       );
+    } finally {
+      setIsImportingRecipe(false);
+      setImageImportProgressText('');
     }
   };
 
@@ -3778,6 +4097,7 @@ export default function PrincipalScreen({
     setManualRecipeEditingId(null);
     setManualRecipeTitle('');
     setManualMainPhotoUrl('');
+    setManualAdditionalPhotos([]);
     setManualRecipeDescription('');
     setManualIngredients(['']);
     setManualSteps(['']);
@@ -4283,12 +4603,7 @@ export default function PrincipalScreen({
     setRecipeDetailFeedback('Guardando traducción...');
 
     try {
-      const cleanStepPhotos = normalizeRecipeStepPhotos(
-        recipeDetailDraft.stepPhotos,
-        translatedSteps.length > 0 ? translatedSteps.length : 1
-      )
-        .map((item) => String(item || '').trim())
-        .slice(0, translatedSteps.length > 0 ? translatedSteps.length : 1);
+      const cleanAdditionalPhotos = normalizeRecipeAdditionalPhotos(recipeDetailDraft.stepPhotos);
       const descriptionToSave = composeRecipeDescription(translatedDescription, translatedIngredients);
       const instructionsToSave = translatedSteps.join('\n');
 
@@ -4298,7 +4613,7 @@ export default function PrincipalScreen({
           name: translatedTitle || selectedRecipeForView.name,
           description: descriptionToSave,
           main_photo_url: recipeDetailDraft.mainPhotoUrl || null,
-          additional_photos: cleanStepPhotos,
+          additional_photos: cleanAdditionalPhotos,
           steps: translatedSteps,
           instructions: instructionsToSave,
           is_public: recipeDetailDraft.isPublic,
@@ -4316,7 +4631,7 @@ export default function PrincipalScreen({
         name: translatedTitle || selectedRecipeForView.name,
         description: descriptionToSave,
         main_photo_url: recipeDetailDraft.mainPhotoUrl || null,
-        additional_photos: cleanStepPhotos,
+        additional_photos: cleanAdditionalPhotos,
         steps: translatedSteps,
         instructions: instructionsToSave,
         is_public: recipeDetailDraft.isPublic,
@@ -4507,7 +4822,7 @@ export default function PrincipalScreen({
       }))
       .filter((row) => row.step.length > 0);
     const cleanSteps = cleanStepRows.map((row) => row.step);
-    const cleanStepPhotos = cleanStepRows.map((row) => row.photo);
+    const cleanAdditionalPhotos = normalizeRecipeAdditionalPhotos(recipeDetailDraft.stepPhotos);
     const descriptionToSave = composeRecipeDescription(
       recipeDetailDraft.description,
       recipeDetailDraft.ingredients
@@ -4521,7 +4836,7 @@ export default function PrincipalScreen({
         name,
         description: descriptionToSave,
         main_photo_url: recipeDetailDraft.mainPhotoUrl || null,
-        additional_photos: cleanStepPhotos,
+        additional_photos: cleanAdditionalPhotos,
         steps: cleanSteps,
         instructions: cleanSteps.join('\n'),
         is_public: recipeDetailDraft.isPublic,
@@ -4540,7 +4855,7 @@ export default function PrincipalScreen({
       name,
       description: descriptionToSave,
       main_photo_url: recipeDetailDraft.mainPhotoUrl || null,
-      additional_photos: cleanStepPhotos,
+      additional_photos: cleanAdditionalPhotos,
       steps: cleanSteps,
       instructions: cleanSteps.join('\n'),
       is_public: recipeDetailDraft.isPublic,
@@ -4774,25 +5089,25 @@ export default function PrincipalScreen({
     setCookbookViewFeedback('Recetas movidas correctamente.');
   };
 
-  const handlePickManualPhotoFromSource = async (sourceType = 'gallery') => {
+  const pickPhotoUrlFromSource = async (sourceType = 'gallery', setFeedback = () => {}) => {
     if (sourceType === 'camera' && Platform.OS === 'web') {
-      setManualRecipeFeedback('La cámara no está disponible en web.');
-      return;
+      setFeedback('La cámara no está disponible en web.');
+      return '';
     }
 
     if (sourceType === 'camera' && Platform.OS !== 'web') {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (permission.status !== 'granted') {
-        setManualRecipeFeedback('Debes permitir acceso a la cámara para tomar foto.');
-        return;
+        setFeedback('Debes permitir acceso a la cámara para tomar foto.');
+        return '';
       }
     }
 
     if (sourceType !== 'camera' && Platform.OS !== 'web') {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (permission.status !== 'granted') {
-        setManualRecipeFeedback('Debes permitir acceso a tus fotos para agregar imagen.');
-        return;
+        setFeedback('Debes permitir acceso a tus fotos para agregar imagen.');
+        return '';
       }
     }
 
@@ -4811,7 +5126,7 @@ export default function PrincipalScreen({
           });
 
     if (result.canceled || !result.assets?.length) {
-      return;
+      return '';
     }
 
     const selectedAsset = result.assets[0];
@@ -4820,12 +5135,60 @@ export default function PrincipalScreen({
       ? `data:${mimeType};base64,${selectedAsset.base64}`
       : selectedAsset.uri;
 
+    return photoUrl;
+  };
+
+  const handlePickManualPhotoFromSource = async (sourceType = 'gallery') => {
+    const photoUrl = await pickPhotoUrlFromSource(sourceType, setManualRecipeFeedback);
+    if (!photoUrl) {
+      return;
+    }
+
     setManualMainPhotoUrl(photoUrl);
     setManualRecipeFeedback('');
   };
 
-  const handlePickManualPhoto = async () => {
-    await handlePickManualPhotoFromSource('gallery');
+  const handlePickManualAdditionalPhotoFromSource = async (sourceType = 'gallery') => {
+    const photoUrl = await pickPhotoUrlFromSource(sourceType, setManualRecipeFeedback);
+    if (!photoUrl) {
+      return;
+    }
+
+    setManualAdditionalPhotos((prevPhotos) => [...normalizeRecipeAdditionalPhotos(prevPhotos), photoUrl]);
+    setManualRecipeFeedback('');
+  };
+
+  const handleRemoveManualAdditionalPhoto = (targetIndex) => {
+    setManualAdditionalPhotos((prevPhotos) =>
+      normalizeRecipeAdditionalPhotos(prevPhotos).filter((_, index) => index !== targetIndex)
+    );
+  };
+
+  const handlePickRecipeDetailAdditionalPhotoFromSource = async (sourceType = 'gallery') => {
+    if (!canEditSelectedRecipe || recipeDetailMode !== 'edit') {
+      return;
+    }
+
+    const photoUrl = await pickPhotoUrlFromSource(sourceType, setRecipeDetailFeedback);
+    if (!photoUrl) {
+      return;
+    }
+
+    setRecipeDetailDraft((prevDraft) => ({
+      ...prevDraft,
+      stepPhotos: [...normalizeRecipeAdditionalPhotos(prevDraft.stepPhotos), photoUrl],
+    }));
+    setRecipeDetailFeedback('');
+  };
+
+  const handleRemoveRecipeDetailAdditionalPhoto = (targetIndex) => {
+    setRecipeDetailDraft((prevDraft) => ({
+      ...prevDraft,
+      stepPhotos: normalizeRecipeAdditionalPhotos(prevDraft.stepPhotos).filter(
+        (_, index) => index !== targetIndex
+      ),
+    }));
+    setRecipeDetailFeedback('');
   };
 
   const handlePickRecipeDetailPhotoFromSource = async (sourceType = 'gallery') => {
@@ -4833,50 +5196,10 @@ export default function PrincipalScreen({
       return;
     }
 
-    if (sourceType === 'camera' && Platform.OS === 'web') {
-      setRecipeDetailFeedback('La cámara no está disponible en web.');
+    const photoUrl = await pickPhotoUrlFromSource(sourceType, setRecipeDetailFeedback);
+    if (!photoUrl) {
       return;
     }
-
-    if (sourceType === 'camera' && Platform.OS !== 'web') {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (permission.status !== 'granted') {
-        setRecipeDetailFeedback('Debes permitir acceso a la cámara para tomar foto.');
-        return;
-      }
-    }
-
-    if (sourceType !== 'camera' && Platform.OS !== 'web') {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (permission.status !== 'granted') {
-        setRecipeDetailFeedback('Debes permitir acceso a tus fotos para agregar imagen.');
-        return;
-      }
-    }
-
-    const result =
-      sourceType === 'camera'
-        ? await ImagePicker.launchCameraAsync({
-            allowsEditing: true,
-            quality: 0.65,
-            base64: true,
-          })
-        : await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
-            quality: 0.65,
-            base64: true,
-          });
-
-    if (result.canceled || !result.assets?.length) {
-      return;
-    }
-
-    const selectedAsset = result.assets[0];
-    const mimeType = selectedAsset.mimeType || 'image/jpeg';
-    const photoUrl = selectedAsset.base64
-      ? `data:${mimeType};base64,${selectedAsset.base64}`
-      : selectedAsset.uri;
 
     setRecipeDetailDraft((prevDraft) => ({
       ...prevDraft,
@@ -4887,6 +5210,14 @@ export default function PrincipalScreen({
 
   const handlePickRecipeDetailPhoto = async () => {
     await handlePickRecipeDetailPhotoFromSource('gallery');
+  };
+
+  const handlePickRecipeDetailAdditionalPhoto = async () => {
+    await handlePickRecipeDetailAdditionalPhotoFromSource('gallery');
+  };
+
+  const handlePickManualPhoto = async () => {
+    await handlePickManualPhotoFromSource('gallery');
   };
 
   const getTodayDateString = () => toIsoDate(new Date());
@@ -5260,12 +5591,7 @@ export default function PrincipalScreen({
         .map((item) => String(item || '').trim())
         .filter((item) => item.length > 0);
       const cleanSteps = normalizeRecipeSteps(detailedRecipe?.steps, detailedRecipe?.instructions);
-      const normalizedStepPhotos = normalizeRecipeStepPhotos(
-        detailedRecipe?.additional_photos,
-        cleanSteps.length > 0 ? cleanSteps.length : 1
-      )
-        .map((url) => String(url || '').trim())
-        .filter((url) => url.length > 0);
+      const normalizedAdditionalPhotos = normalizeRecipeAdditionalPhotos(detailedRecipe?.additional_photos);
 
       const descriptionToSave = composeRecipeDescription(recipeDetailDraft.description, cleanIngredients);
       const sourceUrl = String(detailedRecipe?.source_url || '').trim();
@@ -5276,7 +5602,7 @@ export default function PrincipalScreen({
           name: recipeName,
           description: descriptionToSave || String(detailedRecipe?.description || '').trim() || '',
           main_photo_url: String(detailedRecipe?.main_photo_url || '').trim() || null,
-          additional_photos: normalizedStepPhotos,
+          additional_photos: normalizedAdditionalPhotos,
           steps: cleanSteps,
           instructions: cleanSteps.join('\n'),
           is_public: false,
@@ -5572,6 +5898,7 @@ export default function PrincipalScreen({
 
     const manualDescription = manualRecipeDescription.trim();
     const recipeDescription = composeRecipeDescription(manualDescription, cleanIngredients);
+    const normalizedManualAdditionalPhotos = normalizeRecipeAdditionalPhotos(manualAdditionalPhotos);
     const normalizedTargetCookbookIds = [...new Set(selectedCookbookIds.map((id) => Number(id)))].filter(
       (id) => Number.isFinite(id)
     );
@@ -5585,6 +5912,7 @@ export default function PrincipalScreen({
           name,
           description: recipeDescription || 'Receta editada manualmente.',
           main_photo_url: manualMainPhotoUrl || null,
+          additional_photos: normalizedManualAdditionalPhotos,
           steps: cleanSteps,
           instructions: cleanSteps.join('\n'),
           is_public: manualIsPublic,
@@ -5642,7 +5970,7 @@ export default function PrincipalScreen({
           name,
           description: recipeDescription || 'Receta creada manualmente.',
           main_photo_url: manualMainPhotoUrl || null,
-          additional_photos: [],
+          additional_photos: normalizedManualAdditionalPhotos,
           steps: cleanSteps,
           instructions: cleanSteps.join('\n'),
           is_public: manualIsPublic,
@@ -5697,6 +6025,7 @@ export default function PrincipalScreen({
             name,
             description: recipeDescription || '',
             main_photo_url: manualMainPhotoUrl || refreshedRecipe.main_photo_url || null,
+            additional_photos: normalizedManualAdditionalPhotos,
             steps: cleanSteps,
             instructions: cleanSteps.join('\n'),
             is_public: manualIsPublic,
@@ -5830,91 +6159,105 @@ export default function PrincipalScreen({
     setIsImportingRecipe(true);
     setImportFeedback('Importando receta...');
 
-    let data;
-    let error;
     try {
-      const response = await supabase.functions.invoke('import-recipe-from-url', {
-        body: {
-          url: parsedUrl.toString(),
-        },
-        headers: edgeAuthHeaders,
-      });
-      data = response.data;
-      error = response.error;
-    } catch (invokeError) {
-      setIsImportingRecipe(false);
-      setImportFeedback(invokeError instanceof Error ? invokeError.message : 'Error al invocar la función.');
-      return;
-    }
+      const response = await withTimeout(
+        supabase.functions.invoke('import-recipe-from-url', {
+          body: {
+            url: parsedUrl.toString(),
+          },
+          headers: edgeAuthHeaders,
+        }),
+        IMPORT_REQUEST_TIMEOUT_MS,
+        'La importación desde URL tardó demasiado. Intenta nuevamente.'
+      );
+      const data = response?.data;
+      const error = response?.error;
 
-    setIsImportingRecipe(false);
+      if (error) {
+        let detailedMessage = error.message || 'No se pudo importar la receta.';
+        const contextResponse = error.context;
 
-    if (error) {
-      let detailedMessage = error.message || 'No se pudo importar la receta.';
-      const contextResponse = error.context;
+        if (contextResponse) {
+          const statusPrefix = contextResponse.status ? `(${contextResponse.status}) ` : '';
 
-      if (contextResponse) {
-        const statusPrefix = contextResponse.status ? `(${contextResponse.status}) ` : '';
-
-        try {
-          const payload = await contextResponse.clone().json();
-          const functionMessage =
-            (typeof payload?.error === 'string' && payload.error) ||
-            (typeof payload?.message === 'string' && payload.message) ||
-            '';
-          if (functionMessage) {
-            detailedMessage = `${statusPrefix}${functionMessage}`;
-          } else {
-            detailedMessage = `${statusPrefix}${detailedMessage}`;
-          }
-        } catch (_jsonError) {
           try {
-            const rawText = await contextResponse.clone().text();
-            if (rawText) {
-              detailedMessage = `${statusPrefix}${rawText}`;
+            const payload = await contextResponse.clone().json();
+            const functionMessage =
+              (typeof payload?.error === 'string' && payload.error) ||
+              (typeof payload?.message === 'string' && payload.message) ||
+              '';
+            if (functionMessage) {
+              detailedMessage = `${statusPrefix}${functionMessage}`;
             } else {
               detailedMessage = `${statusPrefix}${detailedMessage}`;
             }
-          } catch (_textError) {
-            detailedMessage = `${statusPrefix}${detailedMessage}`;
+          } catch (_jsonError) {
+            try {
+              const rawText = await contextResponse.clone().text();
+              if (rawText) {
+                detailedMessage = `${statusPrefix}${rawText}`;
+              } else {
+                detailedMessage = `${statusPrefix}${detailedMessage}`;
+              }
+            } catch (_textError) {
+              detailedMessage = `${statusPrefix}${detailedMessage}`;
+            }
           }
+        }
+
+        setImportFeedback(detailedMessage);
+        return;
+      }
+
+      if (data?.error) {
+        setImportFeedback(data.error);
+        return;
+      }
+
+      const normalizedImportUrl = parsedUrl.toString();
+      let importedRecipeFallback = extractImportedRecipeFromPayload(data, normalizedImportUrl);
+      let importedRecipeId = importedRecipeFallback?.id || null;
+
+      if (!importedRecipeId && importedRecipeFallback) {
+        setImportFeedback('Guardando receta importada...');
+        const savedRecipe = await persistImportedRecipeFallback(importedRecipeFallback, normalizedImportUrl);
+        if (savedRecipe?.id) {
+          importedRecipeFallback = savedRecipe;
+          importedRecipeId = savedRecipe.id;
         }
       }
 
-      setImportFeedback(detailedMessage);
-      return;
+      if (!importedRecipeId) {
+        setImportFeedback('Receta importada, pero no se pudo abrir para editar.');
+        return;
+      }
+
+      await supabase
+        .from('recipes')
+        .update({
+          source_url: normalizedImportUrl,
+        })
+        .eq('id', importedRecipeId)
+        .eq('owner_user_id', userId);
+
+      const openedInEditor = await withTimeout(
+        openRecipeInManualEditForm(importedRecipeId, importedRecipeFallback),
+        IMPORT_OPEN_EDITOR_TIMEOUT_MS,
+        'La receta se importó, pero abrir el editor tardó demasiado.'
+      );
+      if (!openedInEditor) {
+        setImportFeedback('Receta importada, pero no se pudo abrir para editar.');
+      }
+    } catch (importError) {
+      setImportFeedback(
+        importError instanceof Error ? importError.message : 'Error al invocar la función.'
+      );
+    } finally {
+      setIsImportingRecipe(false);
     }
-
-    if (data?.error) {
-      setImportFeedback(data.error);
-      return;
-    }
-
-    const importedRecipeId = data?.recipe?.id;
-    if (!importedRecipeId) {
-      setImportFeedback('Receta importada, pero no se pudo abrir para editar.');
-      return;
-    }
-
-    const normalizedImportUrl = parsedUrl.toString();
-    await supabase
-      .from('recipes')
-      .update({
-        source_url: normalizedImportUrl,
-      })
-      .eq('id', importedRecipeId)
-      .eq('owner_user_id', userId);
-
-    const importedRecipeFallback =
-      data?.recipe && typeof data.recipe === 'object'
-        ? {
-            ...data.recipe,
-            source_url: normalizedImportUrl,
-          }
-        : null;
-
-    await openRecipeInManualEditForm(importedRecipeId, importedRecipeFallback);
   };
+
+  const manualAdditionalPhotoList = normalizeRecipeAdditionalPhotos(manualAdditionalPhotos);
 
   return (
     <View style={styles.screen}>
@@ -6755,6 +7098,61 @@ export default function PrincipalScreen({
                   </TouchableOpacity>
                 </View>
               </TouchableOpacity>
+            </View>
+
+            <View style={styles.additionalPhotosSection}>
+              <View style={styles.additionalPhotosHeader}>
+                <Text style={styles.additionalPhotosTitle}>Fotos adicionales</Text>
+                <View style={styles.additionalPhotosActions}>
+                  <TouchableOpacity
+                    style={[styles.recipeDetailPhotoQuickAction, isSavingManualRecipe && styles.buttonDisabled]}
+                    onPress={() => {
+                      void handlePickManualAdditionalPhotoFromSource('camera');
+                    }}
+                    disabled={isSavingManualRecipe}
+                  >
+                    <Ionicons name="camera-outline" size={14} color={palette.accent} />
+                    <Text style={styles.recipeDetailPhotoQuickActionText}>Tomar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.recipeDetailPhotoQuickAction, isSavingManualRecipe && styles.buttonDisabled]}
+                    onPress={() => {
+                      void handlePickManualAdditionalPhotoFromSource('gallery');
+                    }}
+                    disabled={isSavingManualRecipe}
+                  >
+                    <Ionicons name="images-outline" size={14} color={palette.accent} />
+                    <Text style={styles.recipeDetailPhotoQuickActionText}>Galería</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {manualAdditionalPhotoList.length > 0 ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.additionalPhotosList}
+                >
+                  {manualAdditionalPhotoList.map((photoUrl, photoIndex) => (
+                    <View key={`manual-additional-photo-${photoIndex}`} style={styles.additionalPhotoTile}>
+                      <Image
+                        source={{ uri: photoUrl }}
+                        style={styles.additionalPhotoTileImage}
+                        resizeMode="cover"
+                      />
+                      <TouchableOpacity
+                        style={[styles.additionalPhotoRemoveButton, isSavingManualRecipe && styles.buttonDisabled]}
+                        onPress={() => handleRemoveManualAdditionalPhoto(photoIndex)}
+                        disabled={isSavingManualRecipe}
+                      >
+                        <Ionicons name="close" size={12} color={palette.card} />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </ScrollView>
+              ) : (
+                <Text style={styles.additionalPhotosEmptyText}>Aún no hay fotos adicionales.</Text>
+              )}
             </View>
 
             <View style={styles.recipeDetailTitleBar}>
@@ -8472,6 +8870,84 @@ const styles = StyleSheet.create({
     color: palette.accent,
     fontFamily: fonts.medium,
     fontSize: 13,
+  },
+  recipeSlideshowControls: {
+    position: 'absolute',
+    left: 10,
+    right: 10,
+    bottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  recipeSlideshowArrow: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(0, 0, 0, 0.38)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeSlideshowCounter: {
+    color: palette.card,
+    fontFamily: fonts.medium,
+    fontSize: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.38)',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  additionalPhotosSection: {
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  additionalPhotosHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  additionalPhotosTitle: {
+    color: palette.accent,
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+  },
+  additionalPhotosActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  additionalPhotosList: {
+    gap: spacing.sm,
+    paddingRight: spacing.sm,
+  },
+  additionalPhotoTile: {
+    width: 92,
+    height: 92,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#DCE6EC',
+    backgroundColor: '#ECF4F2',
+  },
+  additionalPhotoTileImage: {
+    width: '100%',
+    height: '100%',
+  },
+  additionalPhotoRemoveButton: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(11, 31, 26, 0.75)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  additionalPhotosEmptyText: {
+    color: palette.mutedText,
+    fontFamily: fonts.regular,
+    fontSize: 12,
   },
   recipeDetailTitleBar: {
     backgroundColor: '#7892C2',

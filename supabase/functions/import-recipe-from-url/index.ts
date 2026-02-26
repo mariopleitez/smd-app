@@ -468,6 +468,22 @@ function getPlatformNoDataMessage(platform: Platform) {
   return 'No se detectó información suficiente de receta. Prueba con una URL pública o configura OPENAI_API_KEY en la función para extracción avanzada.';
 }
 
+function getPlatformFallbackRecipeName(platform: Platform): string {
+  if (platform === 'instagram') {
+    return 'Receta importada desde Instagram';
+  }
+
+  if (platform === 'tiktok') {
+    return 'Receta importada desde TikTok';
+  }
+
+  if (platform === 'pinterest') {
+    return 'Receta importada desde Pinterest';
+  }
+
+  return 'Receta importada desde web';
+}
+
 function extractRecipeFromDocument(document: any): RecipeExtraction {
   const empty: RecipeExtraction = {
     name: '',
@@ -808,7 +824,11 @@ Deno.serve(async (req) => {
       parsedUrl
     );
 
-    if (!finalExtraction.name) {
+    const hasCoreData =
+      finalExtraction.ingredients.length > 0 ||
+      finalExtraction.steps.length > 0 ||
+      Boolean(finalExtraction.instructions);
+    if (!hasCoreData) {
       return jsonResponse(
         {
           error: getPlatformNoDataMessage(platform),
@@ -817,6 +837,11 @@ Deno.serve(async (req) => {
       );
     }
 
+    const recipeName =
+      finalExtraction.name ||
+      normalizeString(oEmbed?.title ?? '') ||
+      normalizeString(pageTitle) ||
+      getPlatformFallbackRecipeName(platform);
     const description = buildDescription(finalExtraction.description, finalExtraction.ingredients);
     const mainPhotoUrl = finalImages[0] ?? null;
     const additionalPhotos = finalImages.slice(1, 6);
@@ -827,7 +852,7 @@ Deno.serve(async (req) => {
       .from('recipes')
       .insert({
         owner_user_id: authData.user.id,
-        name: finalExtraction.name,
+        name: recipeName,
         description,
         main_photo_url: mainPhotoUrl,
         additional_photos: additionalPhotos,

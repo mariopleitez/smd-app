@@ -294,7 +294,8 @@ Deno.serve(async (req) => {
       mimeType,
     });
 
-    const hasCoreData = extraction.name && (extraction.ingredients.length > 0 || extraction.steps.length > 0);
+    const hasCoreData =
+      extraction.ingredients.length > 0 || extraction.steps.length > 0 || Boolean(extraction.instructions);
     if (!extraction.isRecipe || !hasCoreData) {
       return errorResponse({
         status: 422,
@@ -304,6 +305,8 @@ Deno.serve(async (req) => {
       });
     }
 
+    const recipeName =
+      extraction.name || (sourceType === 'camera' ? 'Receta importada desde cámara' : 'Receta importada desde imagen');
     const description = buildDescription(extraction.description, extraction.ingredients);
     const steps = extraction.steps;
     const instructions = extraction.instructions || (steps.length > 0 ? steps.join('\n') : null);
@@ -312,7 +315,7 @@ Deno.serve(async (req) => {
       .from('recipes')
       .insert({
         owner_user_id: authData.user.id,
-        name: extraction.name,
+        name: recipeName,
         description,
         main_photo_url: null,
         additional_photos: [],
