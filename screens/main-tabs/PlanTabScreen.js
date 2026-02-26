@@ -22,7 +22,7 @@ export default function PlanTabScreen({
   return (
     <View>
       <Text style={styles.title}>Plan de comidas</Text>
-      <Text style={styles.body}>Organiza tu semana y decide qué cocinar cada día.</Text>
+      <Text style={styles.body}>Planifica el menú de la semana</Text>
 
       <View style={styles.planWeekHeader}>
         <TouchableOpacity
@@ -61,25 +61,29 @@ export default function PlanTabScreen({
               {
                 key: 'desayuno',
                 label: 'Desayuno',
+                recipeId: dayItem.breakfastRecipeId || dayItem.breakfastRecipe?.id || null,
                 recipe: dayItem.breakfastRecipe,
               },
               {
                 key: 'snack',
                 label: 'Snack',
+                recipeId: dayItem.snackRecipeId || dayItem.snackRecipe?.id || null,
                 recipe: dayItem.snackRecipe,
               },
               {
                 key: 'almuerzo',
                 label: 'Almuerzo',
+                recipeId: dayItem.lunchRecipeId || dayItem.lunchRecipe?.id || null,
                 recipe: dayItem.lunchRecipe,
               },
               {
                 key: 'cena',
                 label: 'Cena',
+                recipeId: dayItem.dinnerRecipeId || dayItem.dinnerRecipe?.id || null,
                 recipe: dayItem.dinnerRecipe,
               },
             ];
-            const hasAtLeastOneRecipe = mealSlots.some((slot) => Boolean(slot.recipe));
+            const hasAtLeastOneRecipe = mealSlots.some((slot) => Boolean(slot.recipeId));
 
             return (
               <View key={`plan-day-${dayItem.isoDate}`} style={styles.planDayBlock}>
@@ -97,7 +101,7 @@ export default function PlanTabScreen({
                 {hasAtLeastOneRecipe ? (
                   <View style={styles.planMealPreviewRow}>
                     {mealSlots.map((slot) => {
-                      const hasRecipe = Boolean(slot.recipe);
+                      const hasRecipe = Boolean(slot.recipeId);
 
                       return (
                         <View key={`meal-slot-${dayItem.isoDate}-${slot.key}`} style={styles.planMealSlotWrap}>
@@ -105,7 +109,7 @@ export default function PlanTabScreen({
                             style={styles.planMealSlot}
                             onPress={() => {
                               if (hasRecipe) {
-                                handleOpenPlanRecipeDetail(slot.recipe.id);
+                                handleOpenPlanRecipeDetail(slot.recipeId);
                                 return;
                               }
 

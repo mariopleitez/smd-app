@@ -36,11 +36,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   heroCard: {
-    backgroundColor: palette.card,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#DCE6EC',
-    padding: spacing.lg,
+    paddingHorizontal: spacing.lg,
     marginBottom: spacing.lg,
     alignItems: 'center',
   },

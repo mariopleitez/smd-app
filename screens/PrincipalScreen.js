@@ -295,6 +295,11 @@ export default function PrincipalScreen({
       };
     });
 
+  const getCookbookRecipes = (cookbook) =>
+    (Array.isArray(cookbook?.recipes) ? cookbook.recipes : []).filter(
+      (recipe) => recipe && typeof recipe === 'object'
+    );
+
   const loadCookbooks = useCallback(async ({ force = false } = {}) => {
     if (!isSupabaseConfigured || !supabase) {
       return [];
@@ -326,11 +331,12 @@ export default function PrincipalScreen({
             Number.isFinite(parsed.timestamp) &&
             parsed.cookbooks.length > 0
           ) {
-            setCookbooks(parsed.cookbooks);
+            const normalizedCachedCookbooks = normalizeCookbooksForCache(parsed.cookbooks);
+            setCookbooks(normalizedCachedCookbooks);
             lastCookbooksLoadAtRef.current = parsed.timestamp;
 
             if (now - parsed.timestamp < COOKBOOKS_CACHE_TTL_MS) {
-              return parsed.cookbooks;
+              return normalizedCachedCookbooks;
             }
           }
         }
@@ -624,7 +630,7 @@ export default function PrincipalScreen({
   }, []);
   const principalHeaderSubtitle = useMemo(() => {
     if (displayedTab === 'recetas') {
-      return 'Cocina con orden y guarda tus favoritas.';
+      return 'Organiza y guarda tus recetas favoritas';
     }
     if (displayedTab === 'plan') {
       return 'Planifica tu semana con menos fricción.';
@@ -889,6 +895,33 @@ export default function PrincipalScreen({
     };
   };
 
+  const normalizeRecipeForDetailView = (recipe) => {
+    if (!recipe || typeof recipe !== 'object') {
+      return null;
+    }
+
+    const normalizedSteps = normalizeRecipeSteps(recipe?.steps, recipe?.instructions);
+    const normalizedStepPhotos = normalizeRecipeStepPhotos(
+      recipe?.additional_photos,
+      normalizedSteps.length > 0 ? normalizedSteps.length : 1
+    )
+      .map((item) => String(item || '').trim())
+      .slice(0, normalizedSteps.length > 0 ? normalizedSteps.length : 1);
+
+    return {
+      ...recipe,
+      name: String(recipe?.name || ''),
+      description: String(recipe?.description || ''),
+      main_photo_url: String(recipe?.main_photo_url || ''),
+      additional_photos: normalizedStepPhotos,
+      steps: normalizedSteps,
+      instructions:
+        typeof recipe?.instructions === 'string' ? recipe.instructions : normalizedSteps.join('\n'),
+      is_public: Boolean(recipe?.is_public),
+      source_url: String(recipe?.source_url || ''),
+    };
+  };
+
   const hasRecipeDetailPayload = (recipe) => {
     if (!recipe || typeof recipe !== 'object') {
       return false;
@@ -973,8 +1006,8 @@ export default function PrincipalScreen({
         continue;
       }
 
-      const match = (cookbook.recipes || []).find(
-        (recipe) => String(recipe.id) === String(recipeId)
+      const match = getCookbookRecipes(cookbook).find(
+        (recipe) => String(recipe?.id || '') === String(recipeId)
       );
 
       if (match) {
@@ -1036,7 +1069,9 @@ export default function PrincipalScreen({
 
     return cookbooks
       .filter((cookbook) =>
-        (cookbook.recipes || []).some((recipe) => String(recipe.id) === String(selectedRecipeForView.id))
+        getCookbookRecipes(cookbook).some(
+          (recipe) => String(recipe?.id || '') === String(selectedRecipeForView.id)
+        )
       )
       .map((cookbook) => (cookbook.name || '').trim())
       .filter((name) => Boolean(name));
@@ -1169,7 +1204,7 @@ export default function PrincipalScreen({
     );
   }, [planRecipeOptions, planRecipeSearchQuery]);
 
-  const parseIsoDate = (isoDate) => {
+  function parseIsoDate(isoDate) {
     const [year, month, day] = String(isoDate || '')
       .split('-')
       .map((part) => Number(part));
@@ -1179,7 +1214,7 @@ export default function PrincipalScreen({
     }
 
     return new Date(year, month - 1, day);
-  };
+  }
 
   const toIsoDate = (date) => {
     const year = date.getFullYear();
@@ -1300,6 +1335,10 @@ export default function PrincipalScreen({
           isoDate,
           dateObject,
           planRow,
+          breakfastRecipeId: planRow?.breakfast_recipe_id || null,
+          snackRecipeId: planRow?.snack_recipe_id || null,
+          lunchRecipeId: planRow?.lunch_recipe_id || null,
+          dinnerRecipeId: planRow?.dinner_recipe_id || null,
           breakfastRecipe: planRow?.breakfast_recipe_id
             ? planRecipesById[planRow.breakfast_recipe_id] || null
             : null,
@@ -1830,28 +1869,29 @@ export default function PrincipalScreen({
   };
 
   const renderRecipeDetailView = () => {
-    const isEditingRecipeDetail = recipeDetailMode === 'edit';
-    const canTranslateRecipeFromEnglish =
-      canEditSelectedRecipe && !isEditingRecipeDetail && recipeDetailDetectedLanguage === 'en';
-    const recipeSourceUrl = String(selectedRecipeForView?.source_url || '').trim();
-    const selectedRecipeIdKey = String(selectedRecipeForView?.id || '');
-    const isRecipeMarkedCooked = Boolean(recipeCookedById[selectedRecipeIdKey]);
-    const recipeRating = Number(recipeRatingById[selectedRecipeIdKey] || 0);
-    const recipeNote = String(recipeNoteById[selectedRecipeIdKey] || '');
-    const recipeHeroContent = recipeDetailDraft.mainPhotoUrl ? (
-      <Image
-        source={{ uri: recipeDetailDraft.mainPhotoUrl }}
-        style={styles.recipeDetailHeroImage}
-        resizeMode="cover"
-      />
-    ) : (
-      <View style={styles.recipeDetailHeroPlaceholder}>
-        <Ionicons name="image-outline" size={34} color={palette.accent} />
-      </View>
-    );
+    try {
+      const isEditingRecipeDetail = recipeDetailMode === 'edit';
+      const canTranslateRecipeFromEnglish =
+        canEditSelectedRecipe && !isEditingRecipeDetail && recipeDetailDetectedLanguage === 'en';
+      const recipeSourceUrl = String(selectedRecipeForView?.source_url || '').trim();
+      const selectedRecipeIdKey = String(selectedRecipeForView?.id || '');
+      const isRecipeMarkedCooked = Boolean(recipeCookedById[selectedRecipeIdKey]);
+      const recipeRating = Number(recipeRatingById[selectedRecipeIdKey] || 0);
+      const recipeNote = String(recipeNoteById[selectedRecipeIdKey] || '');
+      const recipeHeroContent = recipeDetailDraft.mainPhotoUrl ? (
+        <Image
+          source={{ uri: recipeDetailDraft.mainPhotoUrl }}
+          style={styles.recipeDetailHeroImage}
+          resizeMode="cover"
+        />
+      ) : (
+        <View style={styles.recipeDetailHeroPlaceholder}>
+          <Ionicons name="image-outline" size={34} color={palette.accent} />
+        </View>
+      );
 
-    return (
-      <View>
+      return (
+        <View>
         <View style={styles.recipeDetailTopRow}>
           <TouchableOpacity style={styles.cookbookBackAction} onPress={closeRecipeDetailView}>
             <Ionicons name="chevron-back" size={18} color={palette.accent} />
@@ -2453,8 +2493,20 @@ export default function PrincipalScreen({
 
           {recipeDetailFeedback ? <Text style={styles.feedback}>{recipeDetailFeedback}</Text> : null}
         </View>
-      </View>
-    );
+        </View>
+      );
+    } catch (_renderError) {
+      return (
+        <View>
+          <TouchableOpacity style={styles.cookbookBackAction} onPress={closeRecipeDetailView}>
+            <Ionicons name="chevron-back" size={18} color={palette.accent} />
+            <Text style={styles.cookbookBackActionText}>Regresar</Text>
+          </TouchableOpacity>
+          <Text style={styles.title}>No se pudo abrir la receta</Text>
+          <Text style={styles.body}>Intenta de nuevo desde el plan.</Text>
+        </View>
+      );
+    }
   };
 
   const renderCookbookRecipesView = () => {
@@ -3742,8 +3794,18 @@ export default function PrincipalScreen({
   };
 
   const handleOpenManualRecipeForm = () => {
+    const defaultCookbookId = Number(selectedCookbookForView?.id);
+    const canDefaultToCurrentCookbook =
+      activeTab === 'recetas' &&
+      selectedCookbookForView &&
+      Number.isFinite(defaultCookbookId) &&
+      String(selectedCookbookForView?.owner_user_id || '') === String(userId || '');
+
     closeCreateRecipeSheet(() => {
       resetManualRecipeForm();
+      if (canDefaultToCurrentCookbook) {
+        setSelectedCookbookIds([defaultCookbookId]);
+      }
       setIsManualRecipeModalOpen(true);
     });
   };
@@ -3901,33 +3963,44 @@ export default function PrincipalScreen({
       return;
     }
 
-    recipeDetailRequestIdRef.current += 1;
-    const requestId = recipeDetailRequestIdRef.current;
-    setSelectedRecipeForView(recipe);
-    setRecipeDetailMode('view');
-    setRecipeDetailFeedback('');
-    setIsTranslatingRecipeDetail(false);
-    setRecipeDetailDetectedLanguage('');
-    const initialDraft = buildRecipeDetailDraft(recipe);
-    setRecipeDetailDraft(initialDraft);
-    if (String(recipe?.owner_user_id || '') === String(userId || '')) {
-      void detectRecipeDetailLanguageWithAi(initialDraft, requestId);
-    }
+    try {
+      const safeRecipe = normalizeRecipeForDetailView(recipe);
+      if (!safeRecipe) {
+        setRecipeDetailFeedback('No se pudo abrir la receta.');
+        return;
+      }
 
-    const detailedRecipe = await ensureRecipeDetailsLoaded(recipe);
-    if (!detailedRecipe) {
-      return;
-    }
+      recipeDetailRequestIdRef.current += 1;
+      const requestId = recipeDetailRequestIdRef.current;
+      setSelectedRecipeForView(safeRecipe);
+      setRecipeDetailMode('view');
+      setRecipeDetailFeedback('');
+      setIsTranslatingRecipeDetail(false);
+      setRecipeDetailDetectedLanguage('');
+      const initialDraft = buildRecipeDetailDraft(safeRecipe);
+      setRecipeDetailDraft(initialDraft);
+      if (String(safeRecipe?.owner_user_id || '') === String(userId || '')) {
+        void detectRecipeDetailLanguageWithAi(initialDraft, requestId);
+      }
 
-    if (requestId !== recipeDetailRequestIdRef.current) {
-      return;
-    }
+      const detailedRecipe = await ensureRecipeDetailsLoaded(safeRecipe);
+      if (!detailedRecipe) {
+        return;
+      }
 
-    setSelectedRecipeForView(detailedRecipe);
-    const detailedDraft = buildRecipeDetailDraft(detailedRecipe);
-    setRecipeDetailDraft(detailedDraft);
-    if (String(detailedRecipe?.owner_user_id || '') === String(userId || '')) {
-      void detectRecipeDetailLanguageWithAi(detailedDraft, requestId);
+      if (requestId !== recipeDetailRequestIdRef.current) {
+        return;
+      }
+
+      const safeDetailedRecipe = normalizeRecipeForDetailView(detailedRecipe) || safeRecipe;
+      setSelectedRecipeForView(safeDetailedRecipe);
+      const detailedDraft = buildRecipeDetailDraft(safeDetailedRecipe);
+      setRecipeDetailDraft(detailedDraft);
+      if (String(safeDetailedRecipe?.owner_user_id || '') === String(userId || '')) {
+        void detectRecipeDetailLanguageWithAi(detailedDraft, requestId);
+      }
+    } catch (_unexpectedError) {
+      setRecipeDetailFeedback('No se pudo abrir la receta.');
     }
   };
 
@@ -4251,8 +4324,8 @@ export default function PrincipalScreen({
 
       const updatedCookbook = await refreshCookbooksAndSelectedCookbook(selectedCookbookForView?.id);
       if (updatedCookbook) {
-        const refreshedRecipe = (updatedCookbook.recipes || []).find(
-          (recipe) => String(recipe.id) === String(selectedRecipeForView.id)
+        const refreshedRecipe = getCookbookRecipes(updatedCookbook).find(
+          (recipe) => String(recipe?.id || '') === String(selectedRecipeForView.id)
         );
 
         if (refreshedRecipe) {
@@ -4476,8 +4549,8 @@ export default function PrincipalScreen({
     let recipeAfterSync = syncedRecipe;
     const updatedCookbook = await refreshCookbooksAndSelectedCookbook(selectedCookbookForView?.id);
     if (updatedCookbook) {
-      const refreshedRecipe = (updatedCookbook.recipes || []).find(
-        (recipe) => String(recipe.id) === String(selectedRecipeForView.id)
+      const refreshedRecipe = getCookbookRecipes(updatedCookbook).find(
+        (recipe) => String(recipe?.id || '') === String(selectedRecipeForView.id)
       );
 
       if (refreshedRecipe) {
@@ -4958,37 +5031,61 @@ export default function PrincipalScreen({
       return;
     }
 
-    if (!supabase || !isSupabaseConfigured) {
-      const fallbackRecipe = planRecipesById[recipeId];
-      if (fallbackRecipe) {
-        setSelectedCookbookForView(null);
-        handleOpenRecipeDetail({
+    const normalizedRecipeId = String(recipeId);
+    const fallbackRecipe =
+      planRecipesById[recipeId] || planRecipesById[normalizedRecipeId] || null;
+    const openFallbackRecipe = async () => {
+      if (!fallbackRecipe) {
+        return false;
+      }
+
+      setSelectedCookbookForView(null);
+      try {
+        await handleOpenRecipeDetail({
           ...fallbackRecipe,
           description: '',
           steps: [],
           instructions: '',
           is_public: false,
+          source_url: '',
         });
+        return true;
+      } catch (_fallbackOpenError) {
+        return false;
       }
-      return;
+    };
+
+    try {
+      if (!supabase || !isSupabaseConfigured) {
+        await openFallbackRecipe();
+        return;
+      }
+
+      setPlanFeedback('');
+      const { data, error } = await supabase
+        .from('recipes')
+        .select(
+          'id, owner_user_id, name, description, main_photo_url, additional_photos, steps, instructions, is_public, source_url'
+        )
+        .eq('id', recipeId)
+        .single();
+
+      if (error || !data) {
+        const openedFallback = await openFallbackRecipe();
+        if (!openedFallback) {
+          setPlanFeedback('No se pudo abrir la receta desde el plan.');
+        }
+        return;
+      }
+
+      setSelectedCookbookForView(null);
+      await handleOpenRecipeDetail(data);
+    } catch (_unexpectedError) {
+      const openedFallback = await openFallbackRecipe();
+      if (!openedFallback) {
+        setPlanFeedback('No se pudo abrir la receta desde el plan.');
+      }
     }
-
-    setPlanFeedback('');
-    const { data, error } = await supabase
-      .from('recipes')
-      .select(
-        'id, owner_user_id, name, description, main_photo_url, additional_photos, steps, instructions, is_public, source_url'
-      )
-      .eq('id', recipeId)
-      .single();
-
-    if (error || !data) {
-      setPlanFeedback('No se pudo abrir la receta desde el plan.');
-      return;
-    }
-
-    setSelectedCookbookForView(null);
-    handleOpenRecipeDetail(data);
   };
 
   const handleRemoveRecipeFromPlanSlot = async (isoDate, mealType) => {
@@ -5023,7 +5120,7 @@ export default function PrincipalScreen({
   const getRecipeMembershipInOwnCookbooks = (recipeId) =>
     ownCookbooks
       .filter((cookbook) =>
-        (cookbook.recipes || []).some((recipe) => String(recipe.id) === String(recipeId))
+        getCookbookRecipes(cookbook).some((recipe) => String(recipe?.id || '') === String(recipeId))
       )
       .map((cookbook) => cookbook.id);
 
@@ -5066,68 +5163,71 @@ export default function PrincipalScreen({
     setIsSavingRecipeCookbookSelection(true);
     setRecipeDetailFeedback('');
 
-    if (cookbookIdsToAdd.length > 0) {
-      const rowsToAdd = cookbookIdsToAdd.map((cookbookId) => ({
-        cookbook_id: Number(cookbookId),
-        recipe_id: selectedRecipeForView.id,
-      }));
+    try {
+      if (cookbookIdsToAdd.length > 0) {
+        const rowsToAdd = cookbookIdsToAdd.map((cookbookId) => ({
+          cookbook_id: Number(cookbookId),
+          recipe_id: selectedRecipeForView.id,
+        }));
 
-      const { error: addError } = await supabase
-        .from('cookbook_recipes')
-        .upsert(rowsToAdd, { onConflict: 'cookbook_id,recipe_id', ignoreDuplicates: true });
+        const { error: addError } = await supabase
+          .from('cookbook_recipes')
+          .upsert(rowsToAdd, { onConflict: 'cookbook_id,recipe_id', ignoreDuplicates: true });
 
-      if (addError) {
-        setIsSavingRecipeCookbookSelection(false);
-        setRecipeDetailFeedback('No se pudieron actualizar los recetarios de la receta.');
-        return;
+        if (addError) {
+          setRecipeDetailFeedback('No se pudieron actualizar los recetarios de la receta.');
+          return;
+        }
       }
-    }
 
-    if (cookbookIdsToRemove.length > 0) {
-      const { error: removeError } = await supabase
-        .from('cookbook_recipes')
-        .delete()
-        .eq('recipe_id', selectedRecipeForView.id)
-        .in(
-          'cookbook_id',
-          cookbookIdsToRemove.map((id) => Number(id))
-        );
+      if (cookbookIdsToRemove.length > 0) {
+        const { error: removeError } = await supabase
+          .from('cookbook_recipes')
+          .delete()
+          .eq('recipe_id', selectedRecipeForView.id)
+          .in(
+            'cookbook_id',
+            cookbookIdsToRemove.map((id) => Number(id))
+          );
 
-      if (removeError) {
-        setIsSavingRecipeCookbookSelection(false);
-        setRecipeDetailFeedback('No se pudieron actualizar los recetarios de la receta.');
-        return;
+        if (removeError) {
+          setRecipeDetailFeedback('No se pudieron actualizar los recetarios de la receta.');
+          return;
+        }
       }
+
+      const refreshedCookbooks = await loadCookbooks({ force: true });
+      const refreshedCookbook = Array.isArray(refreshedCookbooks)
+        ? refreshedCookbooks.find(
+            (cookbook) => String(cookbook.id) === String(selectedCookbookForView?.id)
+          )
+        : null;
+
+      if (refreshedCookbook) {
+        setSelectedCookbookForView(refreshedCookbook);
+        setCookbookRenameInput(refreshedCookbook.name || '');
+      }
+
+      const refreshedRecipe = Array.isArray(refreshedCookbooks)
+        ? findRecipeAcrossCookbooks(refreshedCookbooks, selectedRecipeForView.id)
+        : null;
+      if (refreshedRecipe) {
+        const mergedRecipe = {
+          ...refreshedRecipe,
+          ...selectedRecipeForView,
+        };
+        recipeDetailsCacheRef.current[String(mergedRecipe.id)] = mergedRecipe;
+        setSelectedRecipeForView(mergedRecipe);
+        setRecipeDetailDraft(buildRecipeDetailDraft(mergedRecipe));
+      }
+
+      setIsRecipeCookbookPickerOpen(false);
+      setRecipeDetailFeedback('Recetarios actualizados correctamente.');
+    } catch (_unexpectedError) {
+      setRecipeDetailFeedback('Ocurrió un error inesperado al actualizar recetarios.');
+    } finally {
+      setIsSavingRecipeCookbookSelection(false);
     }
-
-    const refreshedCookbooks = await loadCookbooks({ force: true });
-    const refreshedCookbook = Array.isArray(refreshedCookbooks)
-      ? refreshedCookbooks.find(
-          (cookbook) => String(cookbook.id) === String(selectedCookbookForView?.id)
-        )
-      : null;
-
-    if (refreshedCookbook) {
-      setSelectedCookbookForView(refreshedCookbook);
-      setCookbookRenameInput(refreshedCookbook.name || '');
-    }
-
-    const refreshedRecipe = Array.isArray(refreshedCookbooks)
-      ? findRecipeAcrossCookbooks(refreshedCookbooks, selectedRecipeForView.id)
-      : null;
-    if (refreshedRecipe) {
-      const mergedRecipe = {
-        ...refreshedRecipe,
-        ...selectedRecipeForView,
-      };
-      recipeDetailsCacheRef.current[String(mergedRecipe.id)] = mergedRecipe;
-      setSelectedRecipeForView(mergedRecipe);
-      setRecipeDetailDraft(buildRecipeDetailDraft(mergedRecipe));
-    }
-
-    setIsSavingRecipeCookbookSelection(false);
-    setIsRecipeCookbookPickerOpen(false);
-    setRecipeDetailFeedback('Recetarios actualizados correctamente.');
   };
 
   const handleAddRecipeToOwnCookbooks = async () => {
@@ -5199,7 +5299,9 @@ export default function PrincipalScreen({
         const nextOwnCookbooks = refreshedCookbooks.filter((cookbook) => cookbook.owner_user_id === userId);
         hasOwnCookbooksAvailable = nextOwnCookbooks.length > 0;
         parentCookbook = refreshedCookbooks.find((cookbook) =>
-          (cookbook.recipes || []).some((recipe) => String(recipe.id) === String(insertedRecipe.id))
+          getCookbookRecipes(cookbook).some(
+            (recipe) => String(recipe?.id || '') === String(insertedRecipe.id)
+          )
         );
         const recipeFromCookbooks = findRecipeAcrossCookbooks(refreshedCookbooks, insertedRecipe.id);
         if (recipeFromCookbooks) {
@@ -5226,6 +5328,8 @@ export default function PrincipalScreen({
       } else {
         setRecipeDetailFeedback('Receta copiada a tus recetas. Crea un recetario para organizarla.');
       }
+    } catch (_unexpectedError) {
+      setRecipeDetailFeedback('Ocurrió un error inesperado al copiar la receta.');
     } finally {
       setIsAddingRecipeToOwnCookbooks(false);
     }
@@ -5665,7 +5769,7 @@ export default function PrincipalScreen({
           }
         : recipeData;
       const parentCookbook = sourceCookbooks.find((cookbook) =>
-        (cookbook.recipes || []).some((recipe) => String(recipe.id) === String(syncedRecipe.id))
+        getCookbookRecipes(cookbook).some((recipe) => String(recipe?.id || '') === String(syncedRecipe.id))
       );
 
       recipeDetailsCacheRef.current[String(syncedRecipe.id)] = syncedRecipe;
@@ -5979,7 +6083,7 @@ export default function PrincipalScreen({
                 <Ionicons
                   name={tab.icon}
                   size={20}
-                  color={isActive ? palette.accent : '#8AA09B'}
+                  color={isActive ? palette.card : 'rgba(255, 255, 255, 0.72)'}
                 />
                 <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{tab.label}</Text>
               </TouchableOpacity>
@@ -7979,10 +8083,10 @@ const styles = StyleSheet.create({
     right: 14,
     bottom: 14,
     flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    backgroundColor: palette.accent,
     borderRadius: 28,
     borderWidth: 1,
-    borderColor: '#D9E2E7',
+    borderColor: '#2D5D58',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 10,
@@ -9423,16 +9527,16 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   tabButtonActive: {
-    backgroundColor: '#ECF4F2',
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
   },
   tabLabel: {
-    color: '#7D918D',
+    color: 'rgba(255, 255, 255, 0.72)',
     fontSize: 12,
     marginTop: 4,
     fontFamily: fonts.medium,
   },
   tabLabelActive: {
-    color: palette.accent,
+    color: palette.card,
     fontFamily: fonts.medium,
   },
 });
