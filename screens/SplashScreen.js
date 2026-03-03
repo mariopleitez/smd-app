@@ -17,7 +17,7 @@ export default function SplashScreen({ onFinish }) {
       contentStyle={styles.content}
     >
       <Image
-        source={require('../public/logo.png')}
+        source={require('../public/logo-splash.png')}
         style={styles.logo}
         resizeMode="contain"
       />
