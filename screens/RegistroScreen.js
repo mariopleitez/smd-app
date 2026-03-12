@@ -175,11 +175,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   formCard: {
-    backgroundColor: palette.card,
-    borderWidth: 1,
-    borderColor: '#DCE6EC',
-    borderRadius: 16,
-    padding: spacing.md,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    borderColor: 'transparent',
+    borderRadius: 0,
+    padding: 0,
     marginBottom: spacing.sm,
   },
   warning: {

@@ -1,6 +1,10 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 type ImageSourceType = 'upload' | 'camera';
+type InputImage = {
+  base64Image: string;
+  mimeType: string;
+};
 
 type ParsedRecipe = {
   isRecipe: boolean;
@@ -18,6 +22,8 @@ const corsHeaders = {
 };
 
 const MAX_IMAGE_BASE64_CHARS = 8_000_000;
+const MAX_IMAGE_COUNT = 5;
+const MAX_TOTAL_IMAGE_BASE64_CHARS = 20_000_000;
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -113,7 +119,7 @@ function buildDescription(description: string, ingredients: string[]): string {
   return cleanDescription;
 }
 
-function buildNoRecipeMessage(sourceType: ImageSourceType, reason: string): string {
+function buildNoRecipeMessage(sourceType: ImageSourceType, reason: string, imageCount = 1): string {
   const cleanReason = normalizeString(reason);
   if (cleanReason) {
     return cleanReason;
@@ -123,12 +129,15 @@ function buildNoRecipeMessage(sourceType: ImageSourceType, reason: string): stri
     return 'La foto tomada no contiene una receta legible. Toma una foto de un libro o pagina de recetas.';
   }
 
+  if (imageCount > 1) {
+    return 'Las imagenes seleccionadas no contienen informacion suficiente de receta.';
+  }
+
   return 'La imagen seleccionada no contiene informacion suficiente de receta.';
 }
 
-async function extractRecipeFromImage(params: {
-  base64Image: string;
-  mimeType: string;
+async function extractRecipeFromImages(params: {
+  images: InputImage[];
 }): Promise<ParsedRecipe> {
   const openAiApiKey = Deno.env.get('OPENAI_API_KEY');
   if (!openAiApiKey) {
@@ -136,19 +145,21 @@ async function extractRecipeFromImage(params: {
   }
 
   const model = Deno.env.get('OPENAI_RECIPE_MODEL') || 'gpt-4.1-mini';
-  const imageDataUrl = `data:${params.mimeType};base64,${params.base64Image}`;
 
   const systemPrompt =
     'Extrae recetas de imagenes. Responde SOLO JSON valido. ' +
-    'Si la imagen no es una receta o no hay datos confiables, marca is_recipe=false y explica reason.';
+    'Las imagenes pueden ser varias paginas de una misma receta. Combina la informacion sin inventar nada. ' +
+    'Si las imagenes no contienen una receta o no hay datos confiables, marca is_recipe=false y explica reason.';
 
   const userPrompt = `
-Analiza esta imagen.
+Analiza estas imagenes.
 
 Reglas:
-1) Solo extrae receta si la imagen muestra claramente contenido de receta (ingredientes/pasos/titulo).
-2) Si no es receta (ej. objeto, persona, paisaje, texto irrelevante), responde is_recipe=false.
-3) No inventes informacion.
+1) Las imagenes pertenecen a una misma receta y pueden ser varias paginas consecutivas.
+2) Solo extrae receta si el conjunto muestra claramente contenido de receta (ingredientes/pasos/titulo).
+3) Si no es receta (ej. objeto, persona, paisaje, texto irrelevante), responde is_recipe=false.
+4) Combina informacion entre imagenes cuando una pagina complete a otra.
+5) No inventes informacion.
 
 Devuelve EXACTAMENTE este JSON:
 {
@@ -178,7 +189,13 @@ Devuelve EXACTAMENTE este JSON:
           role: 'user',
           content: [
             { type: 'text', text: userPrompt },
-            { type: 'image_url', image_url: { url: imageDataUrl } },
+            ...params.images.flatMap((image, index) => [
+              { type: 'text', text: `Imagen ${index + 1}` },
+              {
+                type: 'image_url',
+                image_url: { url: `data:${image.mimeType};base64,${image.base64Image}` },
+              },
+            ]),
           ],
         },
       ],
@@ -256,42 +273,80 @@ Deno.serve(async (req) => {
       image_base64?: unknown;
       mime_type?: unknown;
       source_type?: unknown;
+      images?: unknown;
     };
 
-    const imageBase64 = normalizeString(body.image_base64);
-    const mimeType = normalizeString(body.mime_type || 'image/jpeg').toLowerCase();
     const sourceType = (normalizeString(body.source_type).toLowerCase() || 'upload') as ImageSourceType;
+    const rawImages = Array.isArray(body.images) ? body.images : [];
+    const normalizedImages = (
+      rawImages.length > 0
+        ? rawImages
+        : [
+            {
+              image_base64: body.image_base64,
+              mime_type: body.mime_type,
+            },
+          ]
+    )
+      .map((item) => {
+        const candidate = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+        return {
+          base64Image: normalizeString(candidate.image_base64),
+          mimeType: normalizeString(candidate.mime_type || 'image/jpeg').toLowerCase(),
+        };
+      })
+      .filter((item) => item.base64Image);
 
-    if (!imageBase64) {
+    if (normalizedImages.length === 0) {
       return errorResponse({
         status: 400,
         code: 'IMAGE_BASE64_REQUIRED',
-        error: 'image_base64 is required.',
+        error: 'Se requiere al menos una imagen.',
         canReadImage: false,
       });
     }
 
-    if (imageBase64.length > MAX_IMAGE_BASE64_CHARS) {
-      return errorResponse({
-        status: 413,
-        code: 'IMAGE_TOO_LARGE',
-        error: 'La imagen es demasiado grande. Intenta con una foto mas ligera.',
-        canReadImage: false,
-      });
-    }
-
-    if (!mimeType.startsWith('image/')) {
+    if (normalizedImages.length > MAX_IMAGE_COUNT) {
       return errorResponse({
         status: 400,
-        code: 'IMAGE_INVALID_MIME',
-        error: 'mime_type debe ser una imagen valida.',
+        code: 'TOO_MANY_IMAGES',
+        error: `Solo se permiten hasta ${MAX_IMAGE_COUNT} imagenes por importacion.`,
         canReadImage: false,
       });
     }
 
-    const extraction = await extractRecipeFromImage({
-      base64Image: imageBase64,
-      mimeType,
+    const totalBase64Chars = normalizedImages.reduce((sum, image) => sum + image.base64Image.length, 0);
+    if (totalBase64Chars > MAX_TOTAL_IMAGE_BASE64_CHARS) {
+      return errorResponse({
+        status: 413,
+        code: 'IMAGE_SET_TOO_LARGE',
+        error: 'Las imagenes son demasiado grandes en conjunto. Intenta con fotos mas ligeras.',
+        canReadImage: false,
+      });
+    }
+
+    for (const image of normalizedImages) {
+      if (image.base64Image.length > MAX_IMAGE_BASE64_CHARS) {
+        return errorResponse({
+          status: 413,
+          code: 'IMAGE_TOO_LARGE',
+          error: 'Una de las imagenes es demasiado grande. Intenta con una foto mas ligera.',
+          canReadImage: false,
+        });
+      }
+
+      if (!image.mimeType.startsWith('image/')) {
+        return errorResponse({
+          status: 400,
+          code: 'IMAGE_INVALID_MIME',
+          error: 'Todas las imagenes deben tener un mime_type valido.',
+          canReadImage: false,
+        });
+      }
+    }
+
+    const extraction = await extractRecipeFromImages({
+      images: normalizedImages,
     });
 
     const hasCoreData =
@@ -300,13 +355,18 @@ Deno.serve(async (req) => {
       return errorResponse({
         status: 422,
         code: 'IMAGE_READ_NO_RECIPE',
-        error: buildNoRecipeMessage(sourceType, extraction.reason),
+        error: buildNoRecipeMessage(sourceType, extraction.reason, normalizedImages.length),
         canReadImage: true,
       });
     }
 
     const recipeName =
-      extraction.name || (sourceType === 'camera' ? 'Receta importada desde cámara' : 'Receta importada desde imagen');
+      extraction.name ||
+      (sourceType === 'camera'
+        ? 'Receta importada desde cámara'
+        : normalizedImages.length > 1
+          ? 'Receta importada desde imagenes'
+          : 'Receta importada desde imagen');
     const description = buildDescription(extraction.description, extraction.ingredients);
     const steps = extraction.steps;
     const instructions = extraction.instructions || (steps.length > 0 ? steps.join('\n') : null);
@@ -339,6 +399,7 @@ Deno.serve(async (req) => {
       success: true,
       recipe: insertedRecipe,
       extraction_source: 'image_ocr',
+      image_count: normalizedImages.length,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unexpected image import error.';

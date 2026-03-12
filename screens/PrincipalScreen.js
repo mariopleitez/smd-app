@@ -100,6 +100,7 @@ export default function PrincipalScreen({
   const [dictationRecipeFeedback, setDictationRecipeFeedback] = useState('');
   const [isDictatingRecipe, setIsDictatingRecipe] = useState(false);
   const [isTranscribingRecipeAudio, setIsTranscribingRecipeAudio] = useState(false);
+  const [dictationElapsedSeconds, setDictationElapsedSeconds] = useState(0);
   const [isManualRecipeModalOpen, setIsManualRecipeModalOpen] = useState(false);
   const [manualRecipeTitle, setManualRecipeTitle] = useState('');
   const [manualMainPhotoUrl, setManualMainPhotoUrl] = useState('');
@@ -206,6 +207,28 @@ export default function PrincipalScreen({
   const recipeLanguageRequestIdRef = useRef(0);
   const speechRecognitionRef = useRef(null);
   const audioRecordingRef = useRef(null);
+
+  useEffect(() => {
+    if (!isDictatingRecipe) {
+      return undefined;
+    }
+
+    const intervalId = setInterval(() => {
+      setDictationElapsedSeconds((currentValue) => currentValue + 1);
+    }, 1000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [isDictatingRecipe]);
+
+  const formatDictationElapsedTime = useCallback((totalSeconds) => {
+    const safeSeconds = Math.max(0, Number(totalSeconds || 0));
+    const minutes = Math.floor(safeSeconds / 60);
+    const seconds = safeSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  }, []);
+
   useEffect(() => {
     if (activeTab === displayedTab) {
       return;
@@ -613,42 +636,6 @@ export default function PrincipalScreen({
 
     return '';
   }, [userEmail, userName]);
-  const profileFirstName = useMemo(() => {
-    const normalizedName = String(profileDisplayName || '').trim();
-    if (!normalizedName) {
-      return '';
-    }
-
-    const [firstName = ''] = normalizedName.split(/[\s._-]+/).filter(Boolean);
-    return firstName;
-  }, [profileDisplayName]);
-  const principalHeaderDateLabel = useMemo(() => {
-    try {
-      const formatted = new Intl.DateTimeFormat('es-ES', {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long',
-      }).format(new Date());
-      return formatted.charAt(0).toUpperCase() + formatted.slice(1);
-    } catch (_formatError) {
-      return '';
-    }
-  }, []);
-  const principalHeaderSubtitle = useMemo(() => {
-    if (displayedTab === 'recetas') {
-      return 'Organiza y guarda tus recetas favoritas';
-    }
-    if (displayedTab === 'plan') {
-      return 'Planifica tu semana con menos fricción.';
-    }
-    if (displayedTab === 'lista') {
-      return 'Tu compra, clara y lista para marcar.';
-    }
-    if (displayedTab === 'perfil') {
-      return 'Tu espacio personal en SaveMyDish.';
-    }
-    return 'Todo tu recetario en un solo lugar.';
-  }, [displayedTab]);
 
   const isAuthorRecipe = useCallback(() => false, []);
   const handleDismissTopNotification = useCallback((notificationId) => {
@@ -3207,6 +3194,7 @@ export default function PrincipalScreen({
     audioRecordingRef.current = null;
     setIsDictatingRecipe(false);
     setIsTranscribingRecipeAudio(false);
+    setDictationElapsedSeconds(0);
     setIsDictationModalOpen(false);
   };
 
@@ -3216,6 +3204,7 @@ export default function PrincipalScreen({
       setDictationRecipeFeedback('');
       setIsDictatingRecipe(false);
       setIsTranscribingRecipeAudio(false);
+      setDictationElapsedSeconds(0);
       setIsDictationModalOpen(true);
     });
   };
@@ -3251,6 +3240,7 @@ export default function PrincipalScreen({
         await recording.startAsync();
 
         audioRecordingRef.current = recording;
+        setDictationElapsedSeconds(0);
         setIsDictatingRecipe(true);
         setDictationRecipeFeedback('Grabando... Presiona Detener cuando termines.');
       } catch (_nativeRecordError) {
@@ -3284,6 +3274,7 @@ export default function PrincipalScreen({
       recognition.maxAlternatives = 1;
 
       recognition.onstart = () => {
+        setDictationElapsedSeconds(0);
         setIsDictatingRecipe(true);
         setDictationRecipeFeedback('Escuchando... Dicta tu receta.');
       };
@@ -3795,25 +3786,6 @@ export default function PrincipalScreen({
     }
   };
 
-  const handlePasteFromClipboard = async () => {
-    try {
-      const normalizedText = await readClipboardTextSafely();
-      if (!normalizedText) {
-        if (Platform.OS === 'web') {
-          Alert.alert('Portapapeles', 'En este dispositivo, pega el texto manualmente en el campo.');
-          return;
-        }
-        setPasteRecipeFeedback('El portapapeles está vacío.');
-        return;
-      }
-
-      setPasteRecipeText(normalizedText);
-      setPasteRecipeFeedback('');
-    } catch (_error) {
-      setPasteRecipeFeedback('No se pudo leer el portapapeles.');
-    }
-  };
-
   const handlePasteUrlFromClipboard = async () => {
     try {
       const normalizedText = await readClipboardTextSafely();
@@ -3830,6 +3802,123 @@ export default function PrincipalScreen({
       setImportFeedback('');
     } catch (_error) {
       setImportFeedback('No se pudo leer el portapapeles.');
+    }
+  };
+
+  const handlePopulatePasteTextFromImages = async () => {
+    if (!supabase || !isSupabaseConfigured || !userId) {
+      setPasteRecipeFeedback('Debes iniciar sesión y configurar Supabase para importar.');
+      return;
+    }
+
+    try {
+      if (Platform.OS !== 'web') {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (permission.status !== 'granted') {
+          Alert.alert('Permiso requerido', 'Debes permitir acceso a tus fotos para seleccionar imágenes.');
+          return;
+        }
+      }
+
+      const pickerResult = await withTimeout(
+        ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: false,
+          allowsMultipleSelection: true,
+          selectionLimit: 5,
+          quality: 0.7,
+          base64: Platform.OS === 'web',
+        }),
+        IMPORT_PICKER_TIMEOUT_MS,
+        'La selección de imágenes tardó demasiado. Intenta de nuevo.'
+      );
+
+      if (!pickerResult || pickerResult.canceled || !pickerResult.assets?.length) {
+        return;
+      }
+
+      const selectedAssets = pickerResult.assets.filter(Boolean);
+      if (selectedAssets.length === 0) {
+        return;
+      }
+
+      const edgeAuthHeaders = await getEdgeFunctionAuthHeaders();
+      if (!edgeAuthHeaders) {
+        setPasteRecipeFeedback('Tu sesión no es válida. Cierra sesión y vuelve a entrar.');
+        return;
+      }
+
+      setIsImportingRecipe(true);
+      const imagePayloads = [];
+
+      for (let index = 0; index < selectedAssets.length; index += 1) {
+        const selectedAsset = selectedAssets[index];
+        setPasteRecipeFeedback(
+          selectedAssets.length > 1
+            ? `Leyendo imagen ${index + 1} de ${selectedAssets.length}...`
+            : 'Leyendo imagen...'
+        );
+
+        const imageBase64 = await resolveImageImportBase64(selectedAsset);
+        if (!imageBase64) {
+          setPasteRecipeFeedback(
+            selectedAssets.length > 1
+              ? 'No se pudo leer una de las imágenes seleccionadas.'
+              : 'No se pudo leer la imagen seleccionada.'
+          );
+          return;
+        }
+
+        imagePayloads.push({
+          image_base64: imageBase64,
+          mime_type: selectedAsset?.mimeType || 'image/jpeg',
+        });
+      }
+
+      setPasteRecipeFeedback(
+        selectedAssets.length > 1
+          ? `Extrayendo texto de ${selectedAssets.length} imágenes...`
+          : 'Extrayendo texto de la imagen...'
+      );
+
+      const response = await withTimeout(
+        supabase.functions.invoke('extract-text-from-image', {
+          body: {
+            images: imagePayloads,
+          },
+          headers: edgeAuthHeaders,
+        }),
+        IMPORT_REQUEST_TIMEOUT_MS,
+        'La extracción de texto tardó demasiado. Intenta nuevamente.'
+      );
+      const data = response?.data;
+      const error = response?.error;
+
+      if (error) {
+        const detailedMessage = await resolveInvokeErrorMessage(
+          error,
+          'No se pudo leer el texto desde las imágenes.'
+        );
+        setPasteRecipeFeedback(detailedMessage);
+        return;
+      }
+
+      const extractedText = String(data?.text || '').trim();
+      if (!extractedText) {
+        setPasteRecipeFeedback('No se pudo extraer texto legible de las imágenes.');
+        return;
+      }
+
+      setPasteRecipeText(extractedText);
+      setPasteRecipeFeedback('Texto extraído. Revisa el contenido y toca Guardar.');
+    } catch (unexpectedError) {
+      setPasteRecipeFeedback(
+        unexpectedError instanceof Error
+          ? unexpectedError.message
+          : 'No se pudo leer el texto desde las imágenes.'
+      );
+    } finally {
+      setIsImportingRecipe(false);
     }
   };
 
@@ -3929,7 +4018,9 @@ export default function PrincipalScreen({
         pickerResult = await withTimeout(
           ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
+            allowsEditing: false,
+            allowsMultipleSelection: true,
+            selectionLimit: 5,
             quality: 0.7,
             base64: Platform.OS === 'web',
           }),
@@ -3960,8 +4051,10 @@ export default function PrincipalScreen({
         return;
       }
 
-      const selectedAsset = pickerResult.assets[0];
-      const mimeType = selectedAsset.mimeType || 'image/jpeg';
+      const selectedAssets = pickerResult.assets.filter(Boolean);
+      if (selectedAssets.length === 0) {
+        return;
+      }
 
       const edgeAuthHeaders = await getEdgeFunctionAuthHeaders();
       if (!edgeAuthHeaders) {
@@ -3970,21 +4063,45 @@ export default function PrincipalScreen({
       }
 
       setIsImportingRecipe(true);
-      setImageImportProgressText('Leyendo imagen...');
+      const imagePayloads = [];
 
-      const imageBase64 = await resolveImageImportBase64(selectedAsset);
-      if (!imageBase64) {
-        Alert.alert('Importar receta', 'No se pudo leer la imagen. Intenta con otra foto.');
-        return;
+      for (let index = 0; index < selectedAssets.length; index += 1) {
+        const selectedAsset = selectedAssets[index];
+        const progressLabel =
+          selectedAssets.length > 1
+            ? `Leyendo imagen ${index + 1} de ${selectedAssets.length}...`
+            : 'Leyendo imagen...';
+        setImageImportProgressText(progressLabel);
+
+        const imageBase64 = await resolveImageImportBase64(selectedAsset);
+        if (!imageBase64) {
+          Alert.alert(
+            'Importar receta',
+            selectedAssets.length > 1
+              ? 'No se pudo leer una de las imagenes seleccionadas. Intenta con otras fotos.'
+              : 'No se pudo leer la imagen. Intenta con otra foto.'
+          );
+          return;
+        }
+
+        imagePayloads.push({
+          image_base64: imageBase64,
+          mime_type: selectedAsset?.mimeType || 'image/jpeg',
+        });
       }
 
-      setImageImportProgressText('Analizando imagen...');
+      setImageImportProgressText(
+        selectedAssets.length > 1
+          ? `Analizando ${selectedAssets.length} imagenes...`
+          : 'Analizando imagen...'
+      );
 
       const response = await withTimeout(
         supabase.functions.invoke('import-recipe-from-image', {
           body: {
-            image_base64: imageBase64,
-            mime_type: mimeType,
+            image_base64: imagePayloads[0]?.image_base64 || '',
+            mime_type: imagePayloads[0]?.mime_type || 'image/jpeg',
+            images: imagePayloads,
             source_type: sourceType,
           },
           headers: edgeAuthHeaders,
@@ -6264,45 +6381,33 @@ export default function PrincipalScreen({
       {!selectedRecipeForView ? (
         <View style={styles.mainTopWrap}>
           <View style={styles.mainTopCard}>
-            <TouchableOpacity
-              style={styles.mainTopBellButton}
-              onPress={() => setIsTopNotificationsOpen((prevValue) => !prevValue)}
-              activeOpacity={0.85}
-            >
-              <Ionicons
-                name={isTopNotificationsOpen ? 'notifications' : 'notifications-outline'}
-                size={18}
-                color={palette.accent}
-              />
-              {unreadTopNotificationsCount > 0 ? (
-                <View style={styles.mainTopBellBadge}>
-                  <Text style={styles.mainTopBellBadgeText}>
-                    {unreadTopNotificationsCount > 99
-                      ? '99+'
-                      : String(unreadTopNotificationsCount)}
-                  </Text>
-                </View>
-              ) : null}
-            </TouchableOpacity>
-
             <View style={styles.mainTopRow}>
-              <View style={styles.mainTopBrandWrap}>
-                <Image
-                  source={require('../public/logo.png')}
-                  style={styles.mainTopBrandLogo}
-                  resizeMode="contain"
-                />
-              </View>
+              <Image
+                source={require('../public/logo-solo-texto.png')}
+                style={styles.mainTopBrandLogo}
+                resizeMode="contain"
+              />
 
-              <View style={styles.mainTopTextWrap}>
-                {principalHeaderDateLabel ? (
-                  <Text style={styles.mainTopDateText}>{principalHeaderDateLabel}</Text>
+              <TouchableOpacity
+                style={styles.mainTopBellButton}
+                onPress={() => setIsTopNotificationsOpen((prevValue) => !prevValue)}
+                activeOpacity={0.85}
+              >
+                <Ionicons
+                  name={isTopNotificationsOpen ? 'notifications' : 'notifications-outline'}
+                  size={20}
+                  color="#7B98CE"
+                />
+                {unreadTopNotificationsCount > 0 ? (
+                  <View style={styles.mainTopBellBadge}>
+                    <Text style={styles.mainTopBellBadgeText}>
+                      {unreadTopNotificationsCount > 99
+                        ? '99+'
+                        : String(unreadTopNotificationsCount)}
+                    </Text>
+                  </View>
                 ) : null}
-                <Text style={styles.mainTopGreetingText}>
-                  Hola, {profileFirstName || 'Chef'}
-                </Text>
-                <Text style={styles.mainTopSubtitleText}>{principalHeaderSubtitle}</Text>
-              </View>
+              </TouchableOpacity>
             </View>
 
             {isTopNotificationsOpen ? (
@@ -6543,7 +6648,7 @@ export default function PrincipalScreen({
           />
           <View style={styles.cameraImportPopup}>
             <Text style={styles.cameraImportTitle}>Importar receta con imagen</Text>
-            <Text style={styles.cameraImportSubtitle}>Elige cómo quieres agregar la receta.</Text>
+            <View style={styles.cameraImportDivider} />
 
             <TouchableOpacity
               style={styles.cameraImportOption}
@@ -6553,7 +6658,7 @@ export default function PrincipalScreen({
               }}
             >
               <Ionicons name="images-outline" size={20} color={palette.accent} />
-              <Text style={styles.cameraImportOptionText}>Seleccionar Imagen</Text>
+              <Text style={styles.cameraImportOptionText}>Elegir de la galeria</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -6564,7 +6669,7 @@ export default function PrincipalScreen({
               }}
             >
               <Ionicons name="camera-outline" size={20} color={palette.accent} />
-              <Text style={styles.cameraImportOptionText}>Tomar Fotografía</Text>
+              <Text style={styles.cameraImportOptionText}>Tomar foto</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -6589,27 +6694,27 @@ export default function PrincipalScreen({
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={styles.importPopupWrap}
           >
-            <View style={styles.importPopup}>
-              <Text style={styles.importTitle}>Importar desde texto</Text>
-              <Text style={styles.importSubtitle}>
-                Pega una receta completa y el sistema extraerá título, descripción, ingredientes y pasos.
-              </Text>
-
-              <View style={styles.pasteHeaderRow}>
+            <View style={styles.pasteImportPopup}>
+              <View style={styles.pasteImportHeader}>
+                <Text style={styles.pasteImportTitle}>Escribe o pega tu{'\n'}receta completa</Text>
                 <TouchableOpacity
-                  style={[styles.importButtonSecondary, isImportingRecipe && styles.buttonDisabled]}
-                  onPress={handlePasteFromClipboard}
+                  style={[styles.pasteImportImageButton, isImportingRecipe && styles.buttonDisabled]}
+                  onPress={handlePopulatePasteTextFromImages}
                   disabled={isImportingRecipe}
+                  accessibilityRole="button"
+                  accessibilityLabel="Agregar texto desde imágenes"
                 >
-                  <Text style={styles.importButtonSecondaryText}>Pegar</Text>
+                  <Ionicons name="images-outline" size={24} color={palette.accent} />
                 </TouchableOpacity>
               </View>
 
+              <View style={styles.pasteImportDivider} />
+
               <TextInput
-                style={[styles.importInput, styles.pasteTextInput]}
+                style={styles.pasteImportInput}
                 value={pasteRecipeText}
                 onChangeText={setPasteRecipeText}
-                placeholder="Pega aquí el texto de la receta..."
+                placeholder="Pega aquí tu receta..."
                 placeholderTextColor={palette.mutedText}
                 editable={!isImportingRecipe}
                 multiline
@@ -6623,31 +6728,34 @@ export default function PrincipalScreen({
                   style={[
                     styles.importFeedback,
                     pasteRecipeFeedback.toLowerCase().includes('importada') && styles.importFeedbackSuccess,
-                    pasteRecipeFeedback.toLowerCase().includes('leyendo') && styles.importFeedbackInfo,
+                    (pasteRecipeFeedback.toLowerCase().includes('leyendo') ||
+                      pasteRecipeFeedback.toLowerCase().includes('extrayendo') ||
+                      pasteRecipeFeedback.toLowerCase().includes('texto extra')) &&
+                      styles.importFeedbackInfo,
                   ]}
                 >
                   {pasteRecipeFeedback}
                 </Text>
               ) : null}
 
-              <View style={styles.importActions}>
+              <View style={styles.pasteImportActions}>
                 <TouchableOpacity
-                  style={[styles.importButtonSecondary, isImportingRecipe && styles.buttonDisabled]}
+                  style={[styles.pasteImportButtonSecondary, isImportingRecipe && styles.buttonDisabled]}
                   onPress={() => setIsPasteTextModalOpen(false)}
                   disabled={isImportingRecipe}
                 >
-                  <Text style={styles.importButtonSecondaryText}>Cancelar</Text>
+                  <Text style={styles.pasteImportButtonSecondaryText}>Cancelar</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[
-                    styles.importButtonPrimary,
+                    styles.pasteImportButtonPrimary,
                     (isImportingRecipe || !pasteRecipeText.trim()) && styles.buttonDisabled,
                   ]}
                   onPress={handleImportRecipeFromPastedText}
                   disabled={isImportingRecipe || !pasteRecipeText.trim()}
                 >
-                  <Text style={styles.importButtonPrimaryText}>
-                    {isImportingRecipe ? 'Importando...' : 'Importar'}
+                  <Text style={styles.pasteImportButtonPrimaryText}>
+                    {isImportingRecipe ? 'Procesando...' : 'Guardar'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -6668,58 +6776,48 @@ export default function PrincipalScreen({
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={styles.importPopupWrap}
           >
-            <View style={styles.importPopup}>
-              <Text style={styles.importTitle}>Dictar receta</Text>
-              <Text style={styles.importSubtitle}>
-                Habla tu receta y convertiremos el audio en texto para extraer título, descripción,
-                ingredientes y pasos.
-              </Text>
+            <View style={styles.dictationImportPopup}>
+              <Text style={styles.dictationImportTitle}>Dictar receta</Text>
+              <View style={styles.dictationImportDivider} />
 
-              <View style={styles.dictationControlsRow}>
+              {isDictatingRecipe ? (
+                <>
+                  <View style={styles.dictationRecordingMetaRow}>
+                    <Text style={styles.dictationRecordingTimeText}>
+                      {formatDictationElapsedTime(dictationElapsedSeconds)}
+                    </Text>
+                    <View style={styles.dictationRecordingWaveTrack}>
+                      <View style={styles.dictationRecordingWaveLine} />
+                    </View>
+                    <Ionicons name="timer-outline" size={18} color={palette.accent} />
+                  </View>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.dictationStopButton,
+                      (isImportingRecipe || isTranscribingRecipeAudio) && styles.buttonDisabled,
+                    ]}
+                    onPress={handleStopRecipeDictation}
+                    disabled={isImportingRecipe || isTranscribingRecipeAudio}
+                  >
+                    <Ionicons name="pause" size={24} color="#FFFFFF" />
+                  </TouchableOpacity>
+                </>
+              ) : (
                 <TouchableOpacity
                   style={[
-                    styles.dictationControlButton,
-                    isDictatingRecipe && styles.dictationControlButtonActive,
+                    styles.dictationStartButton,
                     (isImportingRecipe || isTranscribingRecipeAudio) && styles.buttonDisabled,
                   ]}
                   onPress={handleStartRecipeDictation}
-                  disabled={isImportingRecipe || isTranscribingRecipeAudio || isDictatingRecipe}
+                  disabled={isImportingRecipe || isTranscribingRecipeAudio}
                 >
-                  <Ionicons
-                    name={isDictatingRecipe ? 'radio-button-on' : 'mic-outline'}
-                    size={16}
-                    color={isDictatingRecipe ? palette.card : palette.accent}
-                  />
-                  <Text
-                    style={[
-                      styles.dictationControlButtonText,
-                      isDictatingRecipe && styles.dictationControlButtonTextActive,
-                    ]}
-                  >
-                    {isDictatingRecipe
-                      ? Platform.OS === 'web'
-                        ? 'Escuchando...'
-                        : 'Grabando...'
-                      : 'Iniciar dictado'}
-                  </Text>
+                  <Ionicons name="mic-outline" size={28} color="#FFFFFF" />
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.importButtonSecondary,
-                    (!isDictatingRecipe || isImportingRecipe || isTranscribingRecipeAudio) &&
-                      styles.buttonDisabled,
-                  ]}
-                  onPress={handleStopRecipeDictation}
-                  disabled={!isDictatingRecipe || isImportingRecipe || isTranscribingRecipeAudio}
-                >
-                  <Text style={styles.importButtonSecondaryText}>
-                    {isTranscribingRecipeAudio ? 'Transcribiendo...' : 'Detener'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
+              )}
 
               <TextInput
-                style={[styles.importInput, styles.pasteTextInput]}
+                style={styles.dictationImportInput}
                 value={dictationRecipeText}
                 onChangeText={setDictationRecipeText}
                 placeholder="Tu dictado aparecerá aquí..."
@@ -6736,6 +6834,8 @@ export default function PrincipalScreen({
                   style={[
                     styles.importFeedback,
                     (dictationRecipeFeedback.toLowerCase().includes('leyendo') ||
+                      dictationRecipeFeedback.toLowerCase().includes('escuchando') ||
+                      dictationRecipeFeedback.toLowerCase().includes('grabando') ||
                       dictationRecipeFeedback.toLowerCase().includes('transcrib')) &&
                       styles.importFeedbackInfo,
                   ]}
@@ -6744,32 +6844,32 @@ export default function PrincipalScreen({
                 </Text>
               ) : null}
 
-              <View style={styles.importActions}>
+              <View style={styles.dictationImportActions}>
                 <TouchableOpacity
                   style={[
-                    styles.importButtonSecondary,
+                    styles.dictationImportButtonSecondary,
                     (isImportingRecipe || isTranscribingRecipeAudio) && styles.buttonDisabled,
                   ]}
                   onPress={closeDictationImportModal}
                   disabled={isImportingRecipe || isTranscribingRecipeAudio}
                 >
-                  <Text style={styles.importButtonSecondaryText}>Cancelar</Text>
+                  <Text style={styles.dictationImportButtonSecondaryText}>Cancelar</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[
-                    styles.importButtonPrimary,
+                    styles.dictationImportButtonPrimary,
                     (isImportingRecipe || isTranscribingRecipeAudio || !dictationRecipeText.trim()) &&
                       styles.buttonDisabled,
                   ]}
                   onPress={handleImportRecipeFromDictation}
                   disabled={isImportingRecipe || isTranscribingRecipeAudio || !dictationRecipeText.trim()}
                 >
-                  <Text style={styles.importButtonPrimaryText}>
+                  <Text style={styles.dictationImportButtonPrimaryText}>
                     {isImportingRecipe
-                      ? 'Importando...'
+                      ? 'Guardando...'
                       : isTranscribingRecipeAudio
                         ? 'Transcribiendo...'
-                        : 'Importar'}
+                        : 'Guardar'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -6978,25 +7078,20 @@ export default function PrincipalScreen({
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={styles.importPopupWrap}
           >
-            <View style={styles.importPopup}>
-              <Text style={styles.importTitle}>Importar desde URL</Text>
-              <Text style={styles.importSubtitle}>
-                Pega un enlace web o social (TikTok, Instagram, Pinterest). El sistema intentará extraer
-                nombre, fotos, descripción, ingredientes, pasos e instrucciones.
-              </Text>
-
-              <View style={styles.pasteHeaderRow}>
-                <TouchableOpacity
-                  style={[styles.importButtonSecondary, isImportingRecipe && styles.buttonDisabled]}
-                  onPress={handlePasteUrlFromClipboard}
-                  disabled={isImportingRecipe}
-                >
-                  <Text style={styles.importButtonSecondaryText}>Pegar</Text>
-                </TouchableOpacity>
+            <View style={styles.urlImportPopup}>
+              <View style={styles.urlImportHeader}>
+                <View style={styles.urlImportHeaderTextWrap}>
+                  <Text style={styles.urlImportTitle}>Pega una receta</Text>
+                  <Text style={styles.urlImportSubtitle}>
+                    puede ser desde la Web, Instagram o Tik Tok y SaveMyDish extraerá la receta.
+                  </Text>
+                </View>
               </View>
 
+              <View style={styles.urlImportDivider} />
+
               <TextInput
-                style={styles.importInput}
+                style={styles.urlImportInput}
                 value={importUrl}
                 onChangeText={setImportUrl}
                 placeholder="https://..."
@@ -7019,23 +7114,23 @@ export default function PrincipalScreen({
                 </Text>
               ) : null}
 
-              <View style={styles.importActions}>
+              <View style={styles.urlImportActions}>
                 <TouchableOpacity
-                  style={[styles.importButtonSecondary, isImportingRecipe && styles.buttonDisabled]}
+                  style={[styles.urlImportButtonSecondary, isImportingRecipe && styles.buttonDisabled]}
                   onPress={() => setIsImportUrlModalOpen(false)}
                   disabled={isImportingRecipe}
                 >
-                  <Text style={styles.importButtonSecondaryText}>Cancelar</Text>
+                  <Text style={styles.urlImportButtonSecondaryText}>Cancelar</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[
-                    styles.importButtonPrimary,
+                    styles.urlImportButtonPrimary,
                     (isImportingRecipe || !importUrl.trim()) && styles.buttonDisabled,
                   ]}
                   onPress={handleImportRecipeFromUrl}
                   disabled={isImportingRecipe || !importUrl.trim()}
                 >
-                  <Text style={styles.importButtonPrimaryText}>
+                  <Text style={styles.urlImportButtonPrimaryText}>
                     {isImportingRecipe ? 'Importando...' : 'Importar'}
                   </Text>
                 </TouchableOpacity>
@@ -7054,278 +7149,232 @@ export default function PrincipalScreen({
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.manualScreen}
         >
-          <View style={styles.manualHeaderShell}>
-            <View style={styles.recipeDetailTopRow}>
-              <TouchableOpacity style={styles.cookbookBackAction} onPress={closeManualRecipeForm}>
-                <Ionicons name="chevron-back" size={18} color={palette.accent} />
-                <Text style={styles.cookbookBackActionText}>Recetas</Text>
-              </TouchableOpacity>
-            </View>
+          <ScrollView
+            style={styles.recipeComposerScroll}
+            contentContainerStyle={styles.recipeComposerContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.recipeComposerHeroCard}>
+              <View style={styles.recipeComposerTopBar}>
+                <TouchableOpacity style={styles.recipeComposerBackButton} onPress={closeManualRecipeForm}>
+                  <Ionicons name="chevron-back" size={18} color={palette.card} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.recipeComposerEditButton, isSavingManualRecipe && styles.buttonDisabled]}
+                  onPress={handlePickManualPhoto}
+                  disabled={isSavingManualRecipe}
+                >
+                  <Text style={styles.recipeComposerEditButtonText}>Editar</Text>
+                </TouchableOpacity>
+              </View>
 
-            <View style={styles.recipeDetailHero}>
-              <TouchableOpacity style={styles.recipeDetailHeroTouchable} onPress={handlePickManualPhoto} activeOpacity={0.9}>
+              <TouchableOpacity
+                style={styles.recipeComposerHeroMedia}
+                onPress={handlePickManualPhoto}
+                activeOpacity={0.9}
+                disabled={isSavingManualRecipe}
+              >
                 {manualMainPhotoUrl ? (
                   <Image
                     source={{ uri: manualMainPhotoUrl }}
-                    style={styles.recipeDetailHeroImage}
+                    style={styles.recipeComposerHeroImage}
                     resizeMode="cover"
                   />
                 ) : (
-                  <View style={styles.recipeDetailHeroPlaceholder}>
-                    <Ionicons name="image-outline" size={34} color={palette.accent} />
+                  <View style={styles.recipeComposerHeroPlaceholder}>
+                    <Ionicons name="image-outline" size={40} color="#1B1B1B" />
                   </View>
                 )}
-                <View style={styles.recipeDetailPhotoQuickActions}>
-                  <TouchableOpacity
-                    style={[styles.recipeDetailPhotoQuickAction, isSavingManualRecipe && styles.buttonDisabled]}
-                    onPress={() => {
-                      void handlePickManualPhotoFromSource('camera');
-                    }}
-                    disabled={isSavingManualRecipe}
-                  >
-                    <Ionicons name="camera-outline" size={14} color={palette.accent} />
-                    <Text style={styles.recipeDetailPhotoQuickActionText}>Tomar foto</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.recipeDetailPhotoQuickAction, isSavingManualRecipe && styles.buttonDisabled]}
-                    onPress={() => {
-                      void handlePickManualPhotoFromSource('gallery');
-                    }}
-                    disabled={isSavingManualRecipe}
-                  >
-                    <Ionicons name="images-outline" size={14} color={palette.accent} />
-                    <Text style={styles.recipeDetailPhotoQuickActionText}>Elegir de galería</Text>
-                  </TouchableOpacity>
-                </View>
               </TouchableOpacity>
             </View>
 
-            <View style={styles.additionalPhotosSection}>
-              <View style={styles.additionalPhotosHeader}>
-                <Text style={styles.additionalPhotosTitle}>Fotos adicionales</Text>
-                <View style={styles.additionalPhotosActions}>
-                  <TouchableOpacity
-                    style={[styles.recipeDetailPhotoQuickAction, isSavingManualRecipe && styles.buttonDisabled]}
-                    onPress={() => {
-                      void handlePickManualAdditionalPhotoFromSource('camera');
-                    }}
-                    disabled={isSavingManualRecipe}
-                  >
-                    <Ionicons name="camera-outline" size={14} color={palette.accent} />
-                    <Text style={styles.recipeDetailPhotoQuickActionText}>Tomar</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.recipeDetailPhotoQuickAction, isSavingManualRecipe && styles.buttonDisabled]}
-                    onPress={() => {
-                      void handlePickManualAdditionalPhotoFromSource('gallery');
-                    }}
-                    disabled={isSavingManualRecipe}
-                  >
-                    <Ionicons name="images-outline" size={14} color={palette.accent} />
-                    <Text style={styles.recipeDetailPhotoQuickActionText}>Galería</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {manualAdditionalPhotoList.length > 0 ? (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.additionalPhotosList}
-                >
-                  {manualAdditionalPhotoList.map((photoUrl, photoIndex) => (
-                    <View key={`manual-additional-photo-${photoIndex}`} style={styles.additionalPhotoTile}>
-                      <Image
-                        source={{ uri: photoUrl }}
-                        style={styles.additionalPhotoTileImage}
-                        resizeMode="cover"
-                      />
-                      <TouchableOpacity
-                        style={[styles.additionalPhotoRemoveButton, isSavingManualRecipe && styles.buttonDisabled]}
-                        onPress={() => handleRemoveManualAdditionalPhoto(photoIndex)}
-                        disabled={isSavingManualRecipe}
-                      >
-                        <Ionicons name="close" size={12} color={palette.card} />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </ScrollView>
-              ) : (
-                <Text style={styles.additionalPhotosEmptyText}>Aún no hay fotos adicionales.</Text>
-              )}
-            </View>
-
-            <View style={styles.recipeDetailTitleBar}>
-              <TextInput
-                style={styles.recipeDetailTitleInput}
-                value={manualRecipeTitle}
-                onChangeText={setManualRecipeTitle}
-                placeholder="Título..."
-                placeholderTextColor="#D6E2F2"
-                editable={!isSavingManualRecipe}
-              />
-            </View>
-          </View>
-
-          <ScrollView style={styles.manualBody} contentContainerStyle={styles.manualBodyContent}>
-            <View style={styles.manualQuickActionsRow}>
-              <TouchableOpacity
-                style={styles.manualQuickAction}
-                onPress={handleOpenCookbookPicker}
-              >
-                <View style={styles.manualQuickActionIcon}>
-                  <Ionicons name="book-outline" size={20} color={palette.accent} />
-                </View>
-                <Text style={styles.manualQuickActionText}>Recetarios</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.manualQuickAction}
-                onPress={handleOpenPlanFromManualForm}
-              >
-                <View style={styles.manualQuickActionIcon}>
-                  <Ionicons name="calendar-outline" size={20} color={palette.accent} />
-                </View>
-                <Text style={styles.manualQuickActionText}>Plan</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.manualQuickAction}
-                onPress={() => handleManualQuickAccess('lista')}
-              >
-                <View style={styles.manualQuickActionIcon}>
-                  <Ionicons name="checkbox-outline" size={20} color={palette.accent} />
-                </View>
-                <Text style={styles.manualQuickActionText}>Lista</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.manualQuickAction}
-                onPress={() => {
-                  void handleShareRecipeLink(
-                    manualRecipeTitle || 'Receta',
-                    setManualRecipeFeedback
-                  );
-                }}
-              >
-                <View style={styles.manualQuickActionIcon}>
-                  <Ionicons name="share-social-outline" size={20} color={palette.accent} />
-                </View>
-                <Text style={styles.manualQuickActionText}>Compartir</Text>
-              </TouchableOpacity>
-            </View>
-
-            <TouchableOpacity
-              style={styles.manualVisibilityToggle}
-              onPress={() => setManualIsPublic((previousValue) => !previousValue)}
-              disabled={isSavingManualRecipe}
-            >
-              <View style={styles.manualVisibilityToggleLeft}>
-                <Ionicons
-                  name={manualIsPublic ? 'globe-outline' : 'lock-closed-outline'}
-                  size={18}
-                  color={palette.accent}
-                />
-                <Text style={styles.manualVisibilityToggleLabel}>
-                  {manualIsPublic ? 'Receta pública' : 'Receta privada'}
-                </Text>
-              </View>
-              <Text style={styles.manualVisibilityToggleAction}>
-                {manualIsPublic ? 'Cambiar a privada' : 'Cambiar a pública'}
-              </Text>
-            </TouchableOpacity>
-
-            <TextInput
-              style={styles.manualDescriptionInput}
-              value={manualRecipeDescription}
-              onChangeText={setManualRecipeDescription}
-              placeholder="Agrega una descripcion breve..."
-              placeholderTextColor={palette.mutedText}
-              multiline
-              numberOfLines={3}
-              textAlignVertical="top"
-            />
-
-            <Text style={styles.manualSectionTitle}>Ingredientes</Text>
-            {manualIngredients.map((item, index) => (
-              <View key={`ingredient-${index}`} style={styles.manualListRow}>
+            <View style={styles.recipeComposerToolbar}>
+              <Text style={styles.recipeComposerToolbarTitle}>Fotos adicionales</Text>
+              <View style={styles.recipeComposerToolbarActions}>
                 <TouchableOpacity
-                  style={styles.manualDeleteItemButton}
-                  onPress={() => removeManualIngredient(index)}
-                >
-                  <Ionicons name="remove-circle-outline" size={18} color="#8B9AAA" />
-                </TouchableOpacity>
-                <TextInput
-                  ref={(ref) => {
-                    ingredientInputRefs.current[index] = ref;
+                  style={[styles.recipeComposerToolbarButton, isSavingManualRecipe && styles.buttonDisabled]}
+                  onPress={() => {
+                    void handlePickManualAdditionalPhotoFromSource('camera');
                   }}
-                  style={styles.manualListInput}
-                  value={item}
-                  onChangeText={(value) => updateManualIngredient(index, value)}
-                  placeholder="Agregar ingrediente..."
-                  placeholderTextColor={palette.mutedText}
-                  returnKeyType="next"
-                  blurOnSubmit={false}
-                  onSubmitEditing={() => handleManualIngredientSubmit(index)}
-                />
-              </View>
-            ))}
-            <TouchableOpacity style={styles.manualAddMiniButton} onPress={addManualIngredient}>
-              <Ionicons name="add" size={18} color={palette.card} />
-            </TouchableOpacity>
-
-            <Text style={[styles.manualSectionTitle, styles.manualSectionSpacing]}>Preparación</Text>
-            {manualSteps.map((item, index) => (
-              <View key={`step-${index}`} style={styles.manualListRow}>
+                  disabled={isSavingManualRecipe}
+                >
+                  <Ionicons name="camera-outline" size={15} color={palette.accent} />
+                  <Text style={styles.recipeComposerToolbarButtonText}>Tomar</Text>
+                </TouchableOpacity>
                 <TouchableOpacity
-                  style={styles.manualDeleteItemButton}
-                  onPress={() => removeManualStep(index)}
-                >
-                  <Ionicons name="remove-circle-outline" size={18} color="#8B9AAA" />
-                </TouchableOpacity>
-                <Text style={styles.manualStepNumber}>{index + 1}.</Text>
-                <TextInput
-                  ref={(ref) => {
-                    stepInputRefs.current[index] = ref;
+                  style={[styles.recipeComposerToolbarButton, isSavingManualRecipe && styles.buttonDisabled]}
+                  onPress={() => {
+                    void handlePickManualAdditionalPhotoFromSource('gallery');
                   }}
-                  style={styles.manualListInput}
-                  value={item}
-                  onChangeText={(value) => updateManualStep(index, value)}
-                  placeholder="Agregar preparación..."
-                  placeholderTextColor={palette.mutedText}
-                  returnKeyType="next"
-                  blurOnSubmit={false}
-                  onSubmitEditing={() => handleManualStepSubmit(index)}
-                />
+                  disabled={isSavingManualRecipe}
+                >
+                  <Ionicons name="images-outline" size={15} color={palette.accent} />
+                  <Text style={styles.recipeComposerToolbarButtonText}>Galería</Text>
+                </TouchableOpacity>
               </View>
-            ))}
-            <TouchableOpacity style={styles.manualAddMiniButton} onPress={addManualStep}>
-              <Ionicons name="add" size={18} color={palette.card} />
-            </TouchableOpacity>
+            </View>
 
-            {manualRecipeFeedback ? (
-              <Text
-                style={[
-                  styles.manualFeedback,
-                  manualRecipeFeedback.includes('correctamente') && styles.manualFeedbackSuccess,
-                ]}
+            {manualAdditionalPhotoList.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.recipeComposerAdditionalPhotosList}
               >
-                {manualRecipeFeedback}
-              </Text>
+                {manualAdditionalPhotoList.map((photoUrl, photoIndex) => (
+                  <View key={`manual-additional-photo-${photoIndex}`} style={styles.additionalPhotoTile}>
+                    <Image
+                      source={{ uri: photoUrl }}
+                      style={styles.additionalPhotoTileImage}
+                      resizeMode="cover"
+                    />
+                    <TouchableOpacity
+                      style={[styles.additionalPhotoRemoveButton, isSavingManualRecipe && styles.buttonDisabled]}
+                      onPress={() => handleRemoveManualAdditionalPhoto(photoIndex)}
+                      disabled={isSavingManualRecipe}
+                    >
+                      <Ionicons name="close" size={12} color={palette.card} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
             ) : null}
 
-            <TouchableOpacity
-              style={[styles.manualSaveButton, isSavingManualRecipe && styles.buttonDisabled]}
-              onPress={handleSaveManualRecipe}
-              disabled={isSavingManualRecipe}
-            >
-              <Text style={styles.manualSaveButtonText}>
-                {isSavingManualRecipe
-                  ? isEditingRecipeInManualForm
-                    ? 'Guardando cambios...'
-                    : 'Guardando...'
-                  : isEditingRecipeInManualForm
-                  ? 'Guardar cambios'
-                  : 'Guardar receta'}
+            <View style={styles.recipeComposerTitleRow}>
+              <TextInput
+                style={styles.recipeComposerTitleInput}
+                value={manualRecipeTitle}
+                onChangeText={setManualRecipeTitle}
+                placeholder="Nombre de la receta"
+                placeholderTextColor="#6A807C"
+                editable={!isSavingManualRecipe}
+              />
+              <TouchableOpacity
+                style={styles.recipeComposerCookbookButton}
+                onPress={handleOpenCookbookPicker}
+                disabled={isSavingManualRecipe}
+              >
+                <View style={styles.recipeComposerCookbookIcon}>
+                  <Ionicons name="book-outline" size={18} color={palette.accent} />
+                </View>
+                <Text style={styles.recipeComposerCookbookText}>Recetarios</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.recipeComposerBodyCard}>
+              <Text style={styles.recipeComposerLabel}>Nota:</Text>
+              <TextInput
+                style={styles.recipeComposerNoteInput}
+                value={manualRecipeDescription}
+                onChangeText={setManualRecipeDescription}
+                placeholder="Agrega una nota"
+                placeholderTextColor={palette.mutedText}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+                editable={!isSavingManualRecipe}
+              />
+
+              <Text style={styles.recipeComposerSectionTitle}>Ingredientes:</Text>
+              {manualIngredients.map((item, index) => (
+                <View key={`ingredient-${index}`} style={styles.recipeComposerListRow}>
+                  <Text style={styles.recipeComposerBullet}>•</Text>
+                  <TextInput
+                    ref={(ref) => {
+                      ingredientInputRefs.current[index] = ref;
+                    }}
+                    style={styles.recipeComposerListInput}
+                    value={item}
+                    onChangeText={(value) => updateManualIngredient(index, value)}
+                    placeholder="Agregar ingredientes."
+                    placeholderTextColor={palette.mutedText}
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                    onSubmitEditing={() => handleManualIngredientSubmit(index)}
+                    editable={!isSavingManualRecipe}
+                  />
+                  {manualIngredients.length > 1 ? (
+                    <TouchableOpacity
+                      style={styles.recipeComposerRemoveButton}
+                      onPress={() => removeManualIngredient(index)}
+                      disabled={isSavingManualRecipe}
+                    >
+                      <Ionicons name="close" size={14} color="#8B9AAA" />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              ))}
+              <TouchableOpacity
+                style={[styles.recipeComposerAddButton, isSavingManualRecipe && styles.buttonDisabled]}
+                onPress={addManualIngredient}
+                disabled={isSavingManualRecipe}
+              >
+                <Ionicons name="add" size={18} color={palette.card} />
+              </TouchableOpacity>
+
+              <Text style={[styles.recipeComposerSectionTitle, styles.recipeComposerSectionSpacing]}>
+                Instrucciones
               </Text>
-            </TouchableOpacity>
+              {manualSteps.map((item, index) => (
+                <View key={`step-${index}`} style={styles.recipeComposerListRow}>
+                  <Text style={styles.recipeComposerStepNumber}>{index + 1}.</Text>
+                  <TextInput
+                    ref={(ref) => {
+                      stepInputRefs.current[index] = ref;
+                    }}
+                    style={styles.recipeComposerListInput}
+                    value={item}
+                    onChangeText={(value) => updateManualStep(index, value)}
+                    placeholder="Agregar preparación..."
+                    placeholderTextColor={palette.mutedText}
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                    onSubmitEditing={() => handleManualStepSubmit(index)}
+                    editable={!isSavingManualRecipe}
+                  />
+                  {manualSteps.length > 1 ? (
+                    <TouchableOpacity
+                      style={styles.recipeComposerRemoveButton}
+                      onPress={() => removeManualStep(index)}
+                      disabled={isSavingManualRecipe}
+                    >
+                      <Ionicons name="close" size={14} color="#8B9AAA" />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              ))}
+              <TouchableOpacity
+                style={[styles.recipeComposerAddButton, isSavingManualRecipe && styles.buttonDisabled]}
+                onPress={addManualStep}
+                disabled={isSavingManualRecipe}
+              >
+                <Ionicons name="add" size={18} color={palette.card} />
+              </TouchableOpacity>
+
+              {manualRecipeFeedback ? (
+                <Text
+                  style={[
+                    styles.manualFeedback,
+                    manualRecipeFeedback.includes('correctamente') && styles.manualFeedbackSuccess,
+                  ]}
+                >
+                  {manualRecipeFeedback}
+                </Text>
+              ) : null}
+
+              <TouchableOpacity
+                style={[styles.recipeComposerSaveButton, isSavingManualRecipe && styles.buttonDisabled]}
+                onPress={handleSaveManualRecipe}
+                disabled={isSavingManualRecipe}
+              >
+                <Text style={styles.recipeComposerSaveButtonText}>
+                  {isSavingManualRecipe
+                    ? isEditingRecipeInManualForm
+                      ? 'Guardando cambios...'
+                      : 'Guardando...'
+                    : 'Guardar Receta'}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
@@ -7816,42 +7865,28 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.sm,
   },
   mainTopCard: {
-    position: 'relative',
-    borderRadius: 24,
-    backgroundColor: 'rgba(250, 252, 255, 0.94)',
-    borderWidth: 1,
-    borderColor: '#D9E5F0',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    shadowColor: '#0B1F1A',
-    shadowOpacity: 0.1,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 8,
+    borderRadius: 0,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
   },
   mainTopRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.sm,
   },
-  mainTopTextWrap: {
-    flex: 1,
-    paddingRight: 44,
-  },
   mainTopBellButton: {
-    position: 'absolute',
-    right: spacing.md,
-    top: spacing.sm,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#C9D8E8',
-    backgroundColor: '#F6FAFF',
+    borderColor: '#9DB5E0',
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 4,
+    flexShrink: 0,
   },
   mainTopBellBadge: {
     position: 'absolute',
@@ -7923,40 +7958,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
   },
-  mainTopDateText: {
-    color: '#7D8B9D',
-    fontFamily: fonts.medium,
-    fontSize: 12,
-    marginBottom: 3,
-  },
-  mainTopGreetingText: {
-    color: palette.accent,
-    fontFamily: fonts.semiBold,
-    fontSize: 24,
-    lineHeight: 28,
-    marginBottom: 4,
-  },
-  mainTopSubtitleText: {
-    color: '#657488',
-    fontFamily: fonts.regular,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  mainTopBrandWrap: {
-    width: 84,
-    height: 84,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#C8D7E8',
-    backgroundColor: '#EEF5FF',
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 8,
-  },
   mainTopBrandLogo: {
-    width: '100%',
-    height: '100%',
+    width: 180,
+    height: 40,
+    flexShrink: 1,
   },
   contentArea: {
     flexGrow: 1,
@@ -8619,43 +8624,9 @@ const styles = StyleSheet.create({
     color: palette.accent,
     marginBottom: spacing.sm,
   },
-  pasteHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-start',
-    marginBottom: spacing.sm,
-  },
   pasteTextInput: {
     minHeight: 220,
     maxHeight: 300,
-  },
-  dictationControlsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  dictationControlButton: {
-    flex: 1,
-    minHeight: 40,
-    borderWidth: 1,
-    borderColor: palette.accent,
-    borderRadius: 10,
-    backgroundColor: palette.card,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-  },
-  dictationControlButtonActive: {
-    backgroundColor: palette.accent,
-  },
-  dictationControlButtonText: {
-    color: palette.accent,
-    fontFamily: fonts.medium,
-  },
-  dictationControlButtonTextActive: {
-    color: palette.card,
   },
   importFeedback: {
     color: '#B42318',
@@ -8699,6 +8670,289 @@ const styles = StyleSheet.create({
   importButtonPrimaryText: {
     color: palette.card,
     fontFamily: fonts.medium,
+  },
+  dictationImportPopup: {
+    backgroundColor: '#FCFCFC',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E5E8',
+    overflow: 'hidden',
+  },
+  dictationImportTitle: {
+    color: palette.accent,
+    fontFamily: fonts.bold,
+    fontSize: 24,
+    lineHeight: 31,
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 16,
+  },
+  dictationImportDivider: {
+    height: 1,
+    backgroundColor: '#D7DADF',
+    marginBottom: 14,
+  },
+  dictationStartButton: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: palette.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    marginBottom: 18,
+  },
+  dictationRecordingMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 18,
+    marginBottom: 16,
+  },
+  dictationRecordingTimeText: {
+    color: '#444444',
+    fontFamily: fonts.regular,
+    fontSize: 16,
+    minWidth: 38,
+  },
+  dictationRecordingWaveTrack: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  dictationRecordingWaveLine: {
+    borderTopWidth: 2,
+    borderStyle: 'dotted',
+    borderColor: '#B8B1AB',
+  },
+  dictationStopButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#F20D0D',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    marginBottom: 18,
+  },
+  dictationImportInput: {
+    minHeight: 176,
+    marginHorizontal: 24,
+    borderWidth: 1,
+    borderColor: '#D0D5DB',
+    borderRadius: 14,
+    backgroundColor: '#F9FAFB',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    fontFamily: fonts.regular,
+    fontSize: 16,
+    lineHeight: 22,
+    color: palette.accent,
+  },
+  dictationImportActions: {
+    flexDirection: 'row',
+    gap: 16,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 24,
+  },
+  dictationImportButtonSecondary: {
+    flex: 1,
+    minHeight: 50,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#2E5A56',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  dictationImportButtonSecondaryText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 17,
+  },
+  dictationImportButtonPrimary: {
+    flex: 1,
+    minHeight: 50,
+    borderRadius: 14,
+    backgroundColor: '#7C97CC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  dictationImportButtonPrimaryText: {
+    color: '#FFFFFF',
+    fontFamily: fonts.medium,
+    fontSize: 17,
+  },
+  urlImportPopup: {
+    backgroundColor: '#FCFCFC',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E5E8',
+    overflow: 'hidden',
+  },
+  urlImportHeader: {
+    paddingHorizontal: 24,
+    paddingTop: 22,
+    paddingBottom: 18,
+    gap: 14,
+  },
+  urlImportHeaderTextWrap: {
+    gap: 6,
+  },
+  urlImportTitle: {
+    color: palette.accent,
+    fontFamily: fonts.bold,
+    fontSize: 24,
+    lineHeight: 31,
+  },
+  urlImportSubtitle: {
+    color: palette.text,
+    fontFamily: fonts.regular,
+    fontSize: 14,
+    lineHeight: 20,
+    maxWidth: 280,
+  },
+  urlImportDivider: {
+    height: 1,
+    backgroundColor: '#D7DADF',
+  },
+  urlImportInput: {
+    marginHorizontal: 24,
+    marginTop: 24,
+    borderWidth: 1,
+    borderColor: '#2E5A56',
+    borderRadius: 14,
+    backgroundColor: '#EEF2F8',
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    fontFamily: fonts.regular,
+    fontSize: 16,
+    color: palette.accent,
+  },
+  urlImportActions: {
+    flexDirection: 'row',
+    gap: 16,
+    paddingHorizontal: 24,
+    paddingTop: 18,
+    paddingBottom: 24,
+  },
+  urlImportButtonSecondary: {
+    flex: 1,
+    minHeight: 52,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#2E5A56',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  urlImportButtonSecondaryText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 17,
+  },
+  urlImportButtonPrimary: {
+    flex: 1,
+    minHeight: 52,
+    borderRadius: 14,
+    backgroundColor: '#A8B8DE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  urlImportButtonPrimaryText: {
+    color: '#FFFFFF',
+    fontFamily: fonts.medium,
+    fontSize: 17,
+  },
+  pasteImportPopup: {
+    backgroundColor: '#FCFCFC',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E5E8',
+    overflow: 'hidden',
+  },
+  pasteImportHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 16,
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 16,
+  },
+  pasteImportTitle: {
+    flex: 1,
+    color: palette.accent,
+    fontFamily: fonts.bold,
+    fontSize: 24,
+    lineHeight: 30,
+  },
+  pasteImportImageButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pasteImportDivider: {
+    height: 1,
+    backgroundColor: '#D7DADF',
+    marginBottom: 18,
+  },
+  pasteImportInput: {
+    minHeight: 172,
+    marginHorizontal: 24,
+    borderWidth: 1,
+    borderColor: '#D0D5DB',
+    borderRadius: 14,
+    backgroundColor: '#F9FAFB',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    fontFamily: fonts.regular,
+    fontSize: 16,
+    lineHeight: 22,
+    color: palette.accent,
+  },
+  pasteImportActions: {
+    flexDirection: 'row',
+    gap: 16,
+    paddingHorizontal: 24,
+    paddingTop: 18,
+    paddingBottom: 24,
+  },
+  pasteImportButtonSecondary: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#2E5A56',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  pasteImportButtonSecondaryText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 17,
+  },
+  pasteImportButtonPrimary: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 14,
+    backgroundColor: '#7C97CC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  pasteImportButtonPrimaryText: {
+    color: '#FFFFFF',
+    fontFamily: fonts.medium,
+    fontSize: 17,
   },
   cookbookCreateSaveButton: {
     backgroundColor: palette.button,
@@ -9425,51 +9679,61 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.35)',
   },
   cameraImportPopup: {
-    backgroundColor: palette.card,
-    borderRadius: 18,
-    padding: spacing.lg,
+    backgroundColor: '#FCFCFC',
+    borderRadius: 20,
+    paddingHorizontal: 0,
+    paddingTop: 24,
+    paddingBottom: 20,
     borderWidth: 1,
-    borderColor: '#DCE6EC',
-    gap: spacing.sm,
+    borderColor: '#E2E5E8',
+    overflow: 'hidden',
+    alignItems: 'center',
   },
   cameraImportTitle: {
     color: palette.accent,
-    fontFamily: fonts.semiBold,
-    fontSize: 20,
+    fontFamily: fonts.bold,
+    fontSize: 24,
+    lineHeight: 31,
+    textAlign: 'center',
+    paddingHorizontal: 24,
+    marginBottom: 16,
   },
-  cameraImportSubtitle: {
-    color: palette.text,
-    fontFamily: fonts.regular,
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 4,
+  cameraImportDivider: {
+    width: '100%',
+    height: 1,
+    backgroundColor: '#D7DADF',
+    marginBottom: 18,
   },
   cameraImportOption: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 10,
     borderWidth: 1,
-    borderColor: '#DCE6EC',
-    borderRadius: 12,
-    backgroundColor: '#FAFCFF',
-    paddingHorizontal: 12,
-    paddingVertical: 11,
+    borderColor: '#D7DADF',
+    borderRadius: 14,
+    backgroundColor: '#F8F9FA',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    width: '100%',
+    maxWidth: 258,
+    marginBottom: 14,
   },
   cameraImportOptionText: {
     color: palette.accent,
     fontFamily: fonts.medium,
-    fontSize: 14,
+    fontSize: 16,
   },
   cameraImportCancel: {
-    alignSelf: 'flex-end',
-    marginTop: 4,
+    alignSelf: 'center',
+    marginTop: 6,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   cameraImportCancelText: {
-    color: palette.mutedText,
+    color: palette.accent,
     fontFamily: fonts.medium,
-    fontSize: 13,
+    fontSize: 16,
   },
   imageImportLoadingCard: {
     alignSelf: 'center',
@@ -9774,6 +10038,253 @@ const styles = StyleSheet.create({
   manualScreen: {
     flex: 1,
     backgroundColor: palette.background,
+  },
+  recipeComposerScroll: {
+    flex: 1,
+    backgroundColor: palette.background,
+  },
+  recipeComposerContent: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.xl,
+  },
+  recipeComposerHeroCard: {
+    backgroundColor: palette.card,
+    borderRadius: 0,
+    borderWidth: 1,
+    borderColor: '#E3E5E8',
+    overflow: 'hidden',
+  },
+  recipeComposerTopBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 10,
+  },
+  recipeComposerBackButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#7C97CC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeComposerEditButton: {
+    minWidth: 72,
+    minHeight: 34,
+    paddingHorizontal: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#8EABDF',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeComposerEditButtonText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 14,
+  },
+  recipeComposerHeroMedia: {
+    height: 240,
+    backgroundColor: '#FFFFFF',
+  },
+  recipeComposerHeroImage: {
+    width: '100%',
+    height: '100%',
+  },
+  recipeComposerHeroPlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeComposerToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: '#F7F0E3',
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#E3E5E8',
+  },
+  recipeComposerToolbarTitle: {
+    color: palette.accent,
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    flex: 1,
+  },
+  recipeComposerToolbarActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  recipeComposerToolbarButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 34,
+    paddingHorizontal: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#D5DADF',
+    backgroundColor: '#FFFFFF',
+  },
+  recipeComposerToolbarButtonText: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 14,
+  },
+  recipeComposerAdditionalPhotosList: {
+    gap: spacing.sm,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 12,
+    backgroundColor: '#F7F0E3',
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#E3E5E8',
+  },
+  recipeComposerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    backgroundColor: '#F7F0E3',
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#D7D3CB',
+  },
+  recipeComposerTitleInput: {
+    flex: 1,
+    color: palette.accent,
+    fontFamily: fonts.bold,
+    fontSize: 20,
+    lineHeight: 26,
+    textTransform: 'uppercase',
+    paddingVertical: 0,
+  },
+  recipeComposerCookbookButton: {
+    width: 74,
+    alignItems: 'center',
+    gap: 6,
+  },
+  recipeComposerCookbookIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#D9DCD8',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeComposerCookbookText: {
+    color: '#5E746F',
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  recipeComposerBodyCard: {
+    backgroundColor: '#F7F0E3',
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#E3E5E8',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 22,
+  },
+  recipeComposerLabel: {
+    color: palette.accent,
+    fontFamily: fonts.bold,
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  recipeComposerNoteInput: {
+    borderWidth: 1,
+    borderColor: '#8EABDF',
+    borderRadius: 14,
+    backgroundColor: '#FFFDF8',
+    minHeight: 58,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    color: palette.accent,
+    fontFamily: fonts.regular,
+    fontSize: 15,
+    marginBottom: 18,
+  },
+  recipeComposerSectionTitle: {
+    color: palette.accent,
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    lineHeight: 22,
+    marginBottom: 8,
+  },
+  recipeComposerSectionSpacing: {
+    marginTop: 18,
+  },
+  recipeComposerListRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  recipeComposerBullet: {
+    width: 14,
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 18,
+    textAlign: 'center',
+  },
+  recipeComposerStepNumber: {
+    width: 18,
+    color: palette.accent,
+    fontFamily: fonts.regular,
+    fontSize: 15,
+  },
+  recipeComposerListInput: {
+    flex: 1,
+    color: palette.accent,
+    fontFamily: fonts.regular,
+    fontSize: 15,
+    lineHeight: 21,
+    paddingVertical: 4,
+  },
+  recipeComposerRemoveButton: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeComposerAddButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#7C97CC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 6,
+  },
+  recipeComposerSaveButton: {
+    marginTop: 22,
+    minHeight: 50,
+    borderRadius: 16,
+    backgroundColor: '#7C97CC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  recipeComposerSaveButtonText: {
+    color: '#FFFFFF',
+    fontFamily: fonts.medium,
+    fontSize: 17,
   },
   manualHeaderShell: {
     paddingHorizontal: spacing.lg,

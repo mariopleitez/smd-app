@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
+  Image,
   Modal,
   Platform,
   Pressable,
@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { useFonts } from 'expo-font';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   Poppins_400Regular,
   Poppins_500Medium,
@@ -36,8 +37,10 @@ const SCREENS = Object.freeze({
   PRINCIPAL: 'Principal',
 });
 
-const STARTER_RECIPES_COUNT = 3;
 const DEFAULT_PASSWORD_RECOVERY_REDIRECT_URL = 'https://smd-app-seven.vercel.app';
+const STARTER_OFFER_PENDING_EMAIL_KEY = 'smd:trial-offer-pending-email';
+const getStarterOfferSeenKey = (userId) => `smd:trial-offer-seen:${userId}`;
+const normalizeUserEmail = (value) => String(value || '').trim().toLowerCase();
 
 const getPasswordRecoveryRedirectUrl = () => {
   const configuredRedirectUrl = String(
@@ -93,38 +96,6 @@ const clearAuthHashFromUrl = () => {
   window.history.replaceState({}, document.title, cleanUrl);
 };
 
-const getStarterRecipesFromBundle = () => {
-  try {
-    const bundledData = require('./public/recetas.json');
-    return Array.isArray(bundledData?.recipes) ? bundledData.recipes : [];
-  } catch (_error) {
-    return [];
-  }
-};
-
-const composeStarterRecipeDescription = (description, ingredients) => {
-  const baseDescription = String(description || '').trim();
-  const cleanIngredients = Array.isArray(ingredients)
-    ? ingredients.map((item) => String(item || '').trim()).filter((item) => item.length > 0)
-    : [];
-
-  if (!baseDescription && cleanIngredients.length === 0) {
-    return '';
-  }
-
-  if (cleanIngredients.length === 0) {
-    return baseDescription;
-  }
-
-  if (!baseDescription) {
-    return `Ingredientes: ${cleanIngredients.join(', ')}`;
-  }
-
-  return `${baseDescription}\n\nIngredientes: ${cleanIngredients.join(', ')}`;
-};
-
-const getStarterLocalImageUrl = (index) => `/receta${index + 1}.png`;
-
 const isStorageQuotaError = (error) => {
   const errorName = String(error?.name || '').toLowerCase();
   const errorMessage = String(error?.message || '').toLowerCase();
@@ -137,32 +108,6 @@ const isStorageQuotaError = (error) => {
   );
 };
 
-const normalizeStarterSteps = (recipe) => {
-  const fromSteps = Array.isArray(recipe?.steps)
-    ? recipe.steps.map((step) => String(step || '').trim()).filter((step) => step.length > 0)
-    : [];
-  if (fromSteps.length > 0) {
-    return fromSteps;
-  }
-
-  const fromPreparacion = Array.isArray(recipe?.preparacion)
-    ? recipe.preparacion.map((step) => String(step || '').trim()).filter((step) => step.length > 0)
-    : [];
-  if (fromPreparacion.length > 0) {
-    return fromPreparacion;
-  }
-
-  const rawInstructions = String(recipe?.instructions || '').trim();
-  if (rawInstructions.length > 0) {
-    return rawInstructions
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-  }
-
-  return [];
-};
-
 export default function App() {
   const isPasswordRecoveryModeRef = useRef(hasRecoveryTypeInUrl());
   const [screen, setScreen] = useState(SCREENS.SPLASH);
@@ -171,12 +116,10 @@ export default function App() {
     isPasswordRecoveryModeRef.current
   );
   const [hasFinishedSplash, setHasFinishedSplash] = useState(false);
-  const [starterRecipesRefreshToken, setStarterRecipesRefreshToken] = useState(0);
   const [starterOffer, setStarterOffer] = useState(null);
-  const [starterOfferFeedback, setStarterOfferFeedback] = useState('');
-  const [isAcceptingStarterOffer, setIsAcceptingStarterOffer] = useState(false);
   const starterOfferCheckInFlightRef = useRef({});
   const starterOfferShownThisSessionRef = useRef({});
+  const pendingStarterOfferEmailRef = useRef('');
 
   const [fontsLoaded] = useFonts({
     'Poppins-Regular': Poppins_400Regular,
@@ -229,123 +172,51 @@ export default function App() {
   }, []);
 
   const maybeOfferStarterRecipes = useCallback(async (sessionUser) => {
-    if (!supabase || !sessionUser?.id) {
+    if (!sessionUser?.id) {
       return;
     }
 
-    const userId = sessionUser.id;
+    const userId = String(sessionUser.id || '');
     if (starterOfferCheckInFlightRef.current[userId] || starterOfferShownThisSessionRef.current[userId]) {
       return;
     }
     starterOfferCheckInFlightRef.current[userId] = true;
 
     try {
-      const { count, error: countError } = await supabase
-        .from('recipes')
-        .select('id', { count: 'exact', head: true })
-        .eq('owner_user_id', userId);
-
-      if (countError) {
+      const normalizedEmail = normalizeUserEmail(sessionUser.email);
+      if (!normalizedEmail) {
         return;
       }
 
-      if ((count || 0) > 0) {
-        return;
-      }
+      const seenKey = getStarterOfferSeenKey(userId);
+      const [seenValue, pendingEmailValue] = await Promise.all([
+        AsyncStorage.getItem(seenKey).catch(() => null),
+        AsyncStorage.getItem(STARTER_OFFER_PENDING_EMAIL_KEY).catch(() => null),
+      ]);
+      const pendingEmail = normalizeUserEmail(
+        pendingStarterOfferEmailRef.current || pendingEmailValue
+      );
 
-      const starterRecipes = getStarterRecipesFromBundle()
-        .slice(0, STARTER_RECIPES_COUNT)
-        .filter((recipe) => String(recipe?.name || '').trim().length > 0);
-
-      if (starterRecipes.length === 0) {
+      if (seenValue === 'true' || pendingEmail !== normalizedEmail) {
         return;
       }
 
       starterOfferShownThisSessionRef.current[userId] = true;
-      setStarterOffer({
-        userId,
-        recipes: starterRecipes,
-      });
-      setStarterOfferFeedback('');
+      pendingStarterOfferEmailRef.current = '';
+      await Promise.all([
+        AsyncStorage.setItem(seenKey, 'true').catch(() => null),
+        AsyncStorage.removeItem(STARTER_OFFER_PENDING_EMAIL_KEY).catch(() => null),
+      ]);
+
+      setStarterOffer({ userId });
     } finally {
       starterOfferCheckInFlightRef.current[userId] = false;
     }
   }, []);
 
-  const handleAcceptStarterOffer = useCallback(async () => {
-    if (!supabase || !starterOffer?.userId || isAcceptingStarterOffer) {
-      return;
-    }
-
-    setIsAcceptingStarterOffer(true);
-    setStarterOfferFeedback('');
-
-    try {
-      const userId = starterOffer.userId;
-      const { count, error: countError } = await supabase
-        .from('recipes')
-        .select('id', { count: 'exact', head: true })
-        .eq('owner_user_id', userId);
-
-      if (countError) {
-        setStarterOfferFeedback('No se pudo validar tus recetas. Intenta nuevamente.');
-        return;
-      }
-
-      if ((count || 0) > 0) {
-        setStarterOffer(null);
-        return;
-      }
-
-      const rowsToInsert = (starterOffer.recipes || [])
-        .slice(0, STARTER_RECIPES_COUNT)
-        .map((recipe, index) => {
-          const recipeName = String(recipe?.name || '').trim();
-          const steps = normalizeStarterSteps(recipe);
-
-          if (!recipeName) {
-            return null;
-          }
-
-          return {
-            owner_user_id: userId,
-            name: recipeName,
-            description: composeStarterRecipeDescription(recipe?.description, recipe?.ingredients),
-            main_photo_url: getStarterLocalImageUrl(index),
-            additional_photos: [],
-            steps,
-            instructions: steps.join('\n'),
-            is_public: false,
-          };
-        })
-        .filter((row) => Boolean(row));
-
-      if (rowsToInsert.length === 0) {
-        setStarterOffer(null);
-        return;
-      }
-
-      const { error: insertError } = await supabase.from('recipes').insert(rowsToInsert);
-      if (insertError) {
-        setStarterOfferFeedback('No se pudieron cargar las recetas de regalo. Intenta nuevamente.');
-        return;
-      }
-
-      setStarterRecipesRefreshToken((prevToken) => prevToken + 1);
-      setStarterOffer(null);
-    } finally {
-      setIsAcceptingStarterOffer(false);
-    }
-  }, [isAcceptingStarterOffer, starterOffer]);
-
-  const handleDeclineStarterOffer = useCallback(() => {
-    if (isAcceptingStarterOffer) {
-      return;
-    }
-
+  const handleCloseStarterOffer = useCallback(() => {
     setStarterOffer(null);
-    setStarterOfferFeedback('');
-  }, [isAcceptingStarterOffer]);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -391,8 +262,8 @@ export default function App() {
       } else {
         starterOfferCheckInFlightRef.current = {};
         starterOfferShownThisSessionRef.current = {};
+        pendingStarterOfferEmailRef.current = '';
         setStarterOffer(null);
-        setStarterOfferFeedback('');
       }
       if (hasFinishedSplash) {
         if (nextSession && nextIsPasswordRecoveryMode) {
@@ -468,6 +339,10 @@ export default function App() {
       };
     }
 
+    const normalizedEmail = normalizeUserEmail(email);
+    pendingStarterOfferEmailRef.current = normalizedEmail;
+    await AsyncStorage.setItem(STARTER_OFFER_PENDING_EMAIL_KEY, normalizedEmail).catch(() => null);
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -481,6 +356,8 @@ export default function App() {
     });
 
     if (error) {
+      pendingStarterOfferEmailRef.current = '';
+      await AsyncStorage.removeItem(STARTER_OFFER_PENDING_EMAIL_KEY).catch(() => null);
       return { ok: false, message: error.message };
     }
 
@@ -647,7 +524,6 @@ export default function App() {
             userId={session?.user?.id}
             userName={session?.user?.user_metadata?.full_name}
             userAvatar={session?.user?.user_metadata?.avatar_url}
-            starterRecipesRefreshToken={starterRecipesRefreshToken}
           />
         );
       default:
@@ -673,46 +549,19 @@ export default function App() {
         animationType="fade"
         transparent
         visible={Boolean(starterOffer) && screen === SCREENS.PRINCIPAL}
-        onRequestClose={handleDeclineStarterOffer}
+        onRequestClose={handleCloseStarterOffer}
       >
         <View style={styles.starterOverlay}>
           <View style={styles.starterCard}>
-            <Text style={styles.starterTitle}>Gracias por unirte a la comunidad de SaveMyDish</Text>
-            <Text style={styles.starterSubtitle}>
-              Queremos regalarte 3 recetas para que comiences tu experiencia:
-            </Text>
-            <View style={styles.starterList}>
-              {(starterOffer?.recipes || []).slice(0, STARTER_RECIPES_COUNT).map((recipe, index) => (
-                <View key={`starter-recipe-${index}`} style={styles.starterListItem}>
-                  <Text style={styles.starterRecipeName}>
-                    {index + 1}. {recipe.name}
-                  </Text>
-                </View>
-              ))}
-            </View>
-            {Boolean(starterOfferFeedback) && (
-              <Text style={styles.starterFeedback}>{starterOfferFeedback}</Text>
-            )}
-            <View style={styles.starterActions}>
-              <Pressable
-                style={[styles.starterButton, styles.starterButtonGhost]}
-                onPress={handleDeclineStarterOffer}
-                disabled={isAcceptingStarterOffer}
-              >
-                <Text style={styles.starterButtonGhostText}>Ahora no</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.starterButton, styles.starterButtonPrimary, isAcceptingStarterOffer && styles.buttonDisabled]}
-                onPress={handleAcceptStarterOffer}
-                disabled={isAcceptingStarterOffer}
-              >
-                {isAcceptingStarterOffer ? (
-                  <ActivityIndicator size="small" color={palette.card} />
-                ) : (
-                  <Text style={styles.starterButtonPrimaryText}>Sí, cargarlas</Text>
-                )}
-              </Pressable>
-            </View>
+            <Text style={styles.starterEyebrow}>Prueba SaveMyDish</Text>
+            <Image
+              source={require('./public/te-regalamos.png')}
+              style={styles.starterHeroImage}
+              resizeMode="contain"
+            />
+            <Pressable style={styles.starterButtonPrimary} onPress={handleCloseStarterOffer}>
+              <Text style={styles.starterButtonPrimaryText}>Comenzar gratis</Text>
+            </Pressable>
           </View>
         </View>
       </Modal>
@@ -723,85 +572,47 @@ export default function App() {
 const styles = StyleSheet.create({
   starterOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 31, 28, 0.55)',
+    backgroundColor: 'rgba(102, 90, 90, 0.78)',
     paddingHorizontal: 24,
     justifyContent: 'center',
+    alignItems: 'center',
   },
   starterCard: {
-    backgroundColor: palette.card,
-    borderRadius: 20,
-    paddingHorizontal: 20,
-    paddingVertical: 22,
-    borderWidth: 1,
-    borderColor: '#E8DED1',
-    gap: 12,
-  },
-  starterTitle: {
-    color: palette.text,
-    fontFamily: 'Poppins-Bold',
-    fontSize: 19,
-    lineHeight: 26,
-  },
-  starterSubtitle: {
-    color: palette.mutedText,
-    fontFamily: 'Poppins-Regular',
-    fontSize: 14,
-    lineHeight: 21,
-  },
-  starterList: {
-    gap: 8,
-    marginTop: 2,
-  },
-  starterListItem: {
-    backgroundColor: '#F8F2E8',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  starterRecipeName: {
-    color: palette.text,
-    fontFamily: 'Poppins-Medium',
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  starterFeedback: {
-    color: '#A03A3A',
-    fontFamily: 'Poppins-Medium',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  starterActions: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 6,
-  },
-  starterButton: {
-    flex: 1,
-    borderRadius: 12,
-    minHeight: 44,
+    width: '100%',
+    maxWidth: 402,
+    backgroundColor: '#F4ECDD',
+    borderRadius: 18,
+    paddingHorizontal: 36,
+    paddingTop: 30,
+    paddingBottom: 34,
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 10,
   },
-  starterButtonGhost: {
-    backgroundColor: '#F4EFE5',
-    borderWidth: 1,
-    borderColor: '#E2D6C3',
-  },
-  starterButtonGhostText: {
+  starterEyebrow: {
     color: palette.text,
     fontFamily: 'Poppins-Medium',
-    fontSize: 14,
+    fontSize: 19,
+    lineHeight: 28,
+    textAlign: 'center',
+    marginBottom: 18,
+  },
+  starterHeroImage: {
+    width: '100%',
+    height: 220,
+    marginBottom: 30,
   },
   starterButtonPrimary: {
-    backgroundColor: palette.accent,
+    width: '100%',
+    minHeight: 50,
+    borderRadius: 10,
+    backgroundColor: '#7C97CC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
   },
   starterButtonPrimaryText: {
-    color: palette.card,
-    fontFamily: 'Poppins-SemiBold',
-    fontSize: 14,
-  },
-  buttonDisabled: {
-    opacity: 0.75,
+    color: '#FFFFFF',
+    fontFamily: 'Poppins-Medium',
+    fontSize: 18,
+    lineHeight: 24,
   },
 });
