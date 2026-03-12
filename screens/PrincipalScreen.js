@@ -85,6 +85,8 @@ export default function PrincipalScreen({
   const [cookbookFeedback, setCookbookFeedback] = useState('');
   const [isCreateCookbookSheetOpen, setIsCreateCookbookSheetOpen] = useState(false);
   const [newCookbookName, setNewCookbookName] = useState('');
+  const [shouldReturnToCookbookPicker, setShouldReturnToCookbookPicker] = useState(false);
+  const [pendingCookbookCreateFromPicker, setPendingCookbookCreateFromPicker] = useState(false);
   const [isCreateRecipeSheetOpen, setIsCreateRecipeSheetOpen] = useState(false);
   const [isCameraImportPickerOpen, setIsCameraImportPickerOpen] = useState(false);
   const [isImportUrlModalOpen, setIsImportUrlModalOpen] = useState(false);
@@ -268,6 +270,15 @@ export default function PrincipalScreen({
       ]).start();
     });
   }, [activeTab, displayedTab, tabContentOpacity, tabContentTranslateY]);
+
+  useEffect(() => {
+    if (!pendingCookbookCreateFromPicker || isCookbookPickerOpen) {
+      return;
+    }
+
+    setIsCreateCookbookSheetOpen(true);
+    setPendingCookbookCreateFromPicker(false);
+  }, [isCookbookPickerOpen, pendingCookbookCreateFromPicker]);
 
   useEffect(() => {
     cookbooksRef.current = cookbooks;
@@ -1435,7 +1446,15 @@ export default function PrincipalScreen({
       return nextCookbooks;
     });
     setNewCookbookName('');
+    setSelectedCookbookIds((prevIds) =>
+      prevIds.includes(nextCreatedCookbook.id) ? prevIds : [nextCreatedCookbook.id, ...prevIds]
+    );
+    setPendingCookbookCreateFromPicker(false);
     setIsCreateCookbookSheetOpen(false);
+    if (shouldReturnToCookbookPicker) {
+      setIsCookbookPickerOpen(true);
+      setShouldReturnToCookbookPicker(false);
+    }
   };
 
   const handleOpenNewCookbookCard = () => {
@@ -1445,7 +1464,15 @@ export default function PrincipalScreen({
 
     setCookbookFeedback('');
     setNewCookbookName('');
-    setIsCreateCookbookSheetOpen(true);
+    if (isCookbookPickerOpen) {
+      setShouldReturnToCookbookPicker(true);
+      setPendingCookbookCreateFromPicker(true);
+      setIsCookbookPickerOpen(false);
+    } else {
+      setShouldReturnToCookbookPicker(false);
+      setPendingCookbookCreateFromPicker(false);
+      setIsCreateCookbookSheetOpen(true);
+    }
   };
 
   const closeCreateCookbookSheet = () => {
@@ -1454,6 +1481,11 @@ export default function PrincipalScreen({
     }
 
     setIsCreateCookbookSheetOpen(false);
+    setPendingCookbookCreateFromPicker(false);
+    if (shouldReturnToCookbookPicker) {
+      setIsCookbookPickerOpen(true);
+      setShouldReturnToCookbookPicker(false);
+    }
   };
 
   const handleAddItem = async () => {
@@ -6596,46 +6628,6 @@ export default function PrincipalScreen({
       </Modal>
 
       <Modal
-        visible={isCreateCookbookSheetOpen}
-        animationType="slide"
-        transparent
-        onRequestClose={closeCreateCookbookSheet}
-      >
-        <View style={styles.sheetOverlay}>
-          <Pressable style={styles.sheetBackdrop} onPress={closeCreateCookbookSheet} />
-          <View style={styles.cookbookCreateSheet}>
-            <Text style={styles.sheetTitle}>Nuevo Recetario</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Nombre del recetario"
-              placeholderTextColor={palette.mutedText}
-              value={newCookbookName}
-              onChangeText={setNewCookbookName}
-              editable={!isMutatingCookbooks}
-              autoFocus
-              onSubmitEditing={() => handleAddCookbook(newCookbookName)}
-              returnKeyType="done"
-            />
-
-            {cookbookFeedback ? <Text style={styles.feedback}>{cookbookFeedback}</Text> : null}
-
-            <TouchableOpacity
-              style={[
-                styles.cookbookCreateSaveButton,
-                (isMutatingCookbooks || !newCookbookName.trim()) && styles.buttonDisabled,
-              ]}
-              onPress={() => handleAddCookbook(newCookbookName)}
-              disabled={isMutatingCookbooks || !newCookbookName.trim()}
-            >
-              <Text style={styles.cookbookCreateSaveButtonText}>
-                {isMutatingCookbooks ? 'Guardando...' : 'Guardar'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
         visible={isCameraImportPickerOpen}
         animationType="fade"
         transparent
@@ -7240,14 +7232,16 @@ export default function PrincipalScreen({
             ) : null}
 
             <View style={styles.recipeComposerTitleRow}>
-              <TextInput
-                style={styles.recipeComposerTitleInput}
-                value={manualRecipeTitle}
-                onChangeText={setManualRecipeTitle}
-                placeholder="Nombre de la receta"
-                placeholderTextColor="#6A807C"
-                editable={!isSavingManualRecipe}
-              />
+              <View style={styles.recipeComposerTitleContent}>
+                <TextInput
+                  style={styles.recipeComposerTitleInput}
+                  value={manualRecipeTitle}
+                  onChangeText={setManualRecipeTitle}
+                  placeholder="Nombre de la receta"
+                  placeholderTextColor="#6A807C"
+                  editable={!isSavingManualRecipe}
+                />
+              </View>
               <TouchableOpacity
                 style={styles.recipeComposerCookbookButton}
                 onPress={handleOpenCookbookPicker}
@@ -7787,66 +7781,151 @@ export default function PrincipalScreen({
         transparent
         onRequestClose={() => setIsCookbookPickerOpen(false)}
       >
-        <View style={styles.cookbookPickerOverlay}>
+        <View style={styles.cookbookModalOverlay}>
           <Pressable
             style={styles.cookbookPickerBackdrop}
             onPress={() => setIsCookbookPickerOpen(false)}
           />
-          <View style={styles.cookbookPickerPopup}>
-            <Text style={styles.cookbookPickerTitle}>Seleccionar recetarios</Text>
-            <Text style={styles.cookbookPickerSubtitle}>
-              Elige en cuáles recetarios guardar esta receta.
-            </Text>
+          <View style={styles.recipeCookbookDialog}>
+            <View style={styles.recipeCookbookDialogHeader}>
+              <Text style={styles.recipeCookbookDialogTitle}>Guardar en</Text>
+              <TouchableOpacity
+                style={styles.newCookbookDialogCloseButton}
+                onPress={() => setIsCookbookPickerOpen(false)}
+              >
+                <Ionicons name="close" size={20} color={palette.accent} />
+              </TouchableOpacity>
+            </View>
 
-            {isCookbooksLoading ? (
-              <View style={styles.cookbookPickerLoadingWrap}>
-                <ActivityIndicator size="small" color={palette.accent} />
-              </View>
-            ) : ownCookbooks.length === 0 ? (
-              <Text style={styles.cookbookPickerEmptyText}>
-                Aún no tienes recetarios propios para seleccionar.
-              </Text>
-            ) : (
-              <ScrollView style={styles.cookbookPickerList}>
-                {ownCookbooks.map((cookbook) => {
+            <View style={styles.newCookbookDialogDivider} />
+
+            <ScrollView
+              style={styles.recipeCookbookList}
+              contentContainerStyle={styles.recipeCookbookListContent}
+            >
+              <TouchableOpacity
+                style={styles.recipeCookbookCreateRow}
+                onPress={handleOpenNewCookbookCard}
+                disabled={isMutatingCookbooks}
+              >
+                <View style={styles.recipeCookbookCreateIcon}>
+                  <Ionicons name="add" size={24} color="#7C97CC" />
+                </View>
+                <Text style={styles.recipeCookbookCreateText}>Nuevo recetario</Text>
+                <Ionicons name="chevron-forward" size={20} color={palette.accent} />
+              </TouchableOpacity>
+
+              {isCookbooksLoading ? (
+                <View style={styles.cookbookPickerLoadingWrap}>
+                  <ActivityIndicator size="small" color={palette.accent} />
+                </View>
+              ) : ownCookbooks.length === 0 ? (
+                <Text style={styles.cookbookPickerEmptyText}>
+                  Aún no tienes recetarios propios para seleccionar.
+                </Text>
+              ) : (
+                ownCookbooks.map((cookbook) => {
                   const isSelected = selectedCookbookIds.includes(cookbook.id);
+                  const previewPhotoUrl = String(
+                    cookbook?.previewRecipes?.[0]?.main_photo_url || ''
+                  ).trim();
 
                   return (
                     <TouchableOpacity
                       key={`picker-${cookbook.id}`}
-                      style={[
-                        styles.cookbookPickerItem,
-                        isSelected && styles.cookbookPickerItemSelected,
-                      ]}
+                      style={styles.recipeCookbookItemRow}
                       onPress={() => toggleCookbookSelection(cookbook.id)}
                     >
-                      <Ionicons
-                        name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
-                        size={20}
-                        color={isSelected ? palette.button : '#8B9AAA'}
-                        style={styles.cookbookPickerItemIcon}
-                      />
-                      <View style={styles.cookbookPickerItemTextWrap}>
-                        <Text style={styles.cookbookPickerItemTitle}>{cookbook.name}</Text>
-                        <Text style={styles.cookbookPickerItemMeta}>
-                          {cookbook.recipeCount || 0}{' '}
-                          {(cookbook.recipeCount || 0) === 1 ? 'receta' : 'recetas'}
-                        </Text>
+                      {previewPhotoUrl ? (
+                        <Image
+                          source={{ uri: previewPhotoUrl }}
+                          style={styles.recipeCookbookItemImage}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View style={styles.recipeCookbookItemImagePlaceholder}>
+                          <Ionicons name="book-outline" size={18} color={palette.accent} />
+                        </View>
+                      )}
+
+                      <Text style={styles.recipeCookbookItemTitle}>{cookbook.name}</Text>
+                      <View
+                        style={[
+                          styles.recipeCookbookCheckbox,
+                          isSelected && styles.recipeCookbookCheckboxSelected,
+                        ]}
+                      >
+                        {isSelected ? (
+                          <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+                        ) : null}
                       </View>
                     </TouchableOpacity>
                   );
-                })}
-              </ScrollView>
-            )}
+                })
+              )}
+            </ScrollView>
 
-            <View style={styles.cookbookPickerActions}>
+            <View style={styles.recipeCookbookFooter}>
               <TouchableOpacity
-                style={styles.importButtonSecondary}
+                style={styles.recipeCookbookPrimaryButton}
                 onPress={() => setIsCookbookPickerOpen(false)}
               >
-                <Text style={styles.importButtonSecondaryText}>Cerrar</Text>
+                <Text style={styles.recipeCookbookPrimaryButtonText}>Actualizar</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={isCreateCookbookSheetOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={closeCreateCookbookSheet}
+      >
+        <View style={styles.cookbookModalOverlay}>
+          <Pressable style={styles.cookbookPickerBackdrop} onPress={closeCreateCookbookSheet} />
+          <View style={styles.newCookbookDialog}>
+            <View style={styles.newCookbookDialogHeader}>
+              <Text style={styles.newCookbookDialogTitle}>Guardar en</Text>
+              <TouchableOpacity
+                style={styles.newCookbookDialogCloseButton}
+                onPress={closeCreateCookbookSheet}
+                disabled={isMutatingCookbooks}
+              >
+                <Ionicons name="close" size={20} color={palette.accent} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.newCookbookDialogDivider} />
+
+            <Text style={styles.newCookbookLabel}>Título</Text>
+            <TextInput
+              style={styles.newCookbookInput}
+              placeholder="p.ej. Cena"
+              placeholderTextColor={palette.mutedText}
+              value={newCookbookName}
+              onChangeText={setNewCookbookName}
+              editable={!isMutatingCookbooks}
+              autoFocus
+              onSubmitEditing={() => handleAddCookbook(newCookbookName)}
+              returnKeyType="done"
+            />
+
+            {cookbookFeedback ? <Text style={styles.feedback}>{cookbookFeedback}</Text> : null}
+
+            <TouchableOpacity
+              style={[
+                styles.newCookbookPrimaryButton,
+                (isMutatingCookbooks || !newCookbookName.trim()) && styles.buttonDisabled,
+              ]}
+              onPress={() => handleAddCookbook(newCookbookName)}
+              disabled={isMutatingCookbooks || !newCookbookName.trim()}
+            >
+              <Text style={styles.newCookbookPrimaryButtonText}>
+                {isMutatingCookbooks ? 'Creando...' : 'Crear recetario'}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -9821,6 +9900,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: spacing.lg,
   },
+  cookbookModalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
   cookbookPickerBackdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.35)',
@@ -9904,6 +9988,187 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     flexWrap: 'wrap',
     gap: spacing.sm,
+  },
+  recipeCookbookDialog: {
+    backgroundColor: '#FCFCFC',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E5E8',
+    overflow: 'hidden',
+    maxHeight: '82%',
+  },
+  recipeCookbookDialogHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 28,
+    paddingTop: 22,
+    paddingBottom: 16,
+  },
+  recipeCookbookDialogTitle: {
+    color: palette.accent,
+    fontFamily: fonts.bold,
+    fontSize: 24,
+    lineHeight: 31,
+  },
+  recipeCookbookList: {
+    flexGrow: 0,
+  },
+  recipeCookbookListContent: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 20,
+  },
+  recipeCookbookCreateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    paddingVertical: 10,
+    marginBottom: 6,
+  },
+  recipeCookbookCreateIcon: {
+    width: 66,
+    height: 66,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#8EABDF',
+    backgroundColor: '#F8FAFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeCookbookCreateText: {
+    flex: 1,
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 17,
+  },
+  recipeCookbookItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    paddingVertical: 8,
+  },
+  recipeCookbookItemImage: {
+    width: 66,
+    height: 66,
+    borderRadius: 10,
+  },
+  recipeCookbookItemImagePlaceholder: {
+    width: 66,
+    height: 66,
+    borderRadius: 10,
+    backgroundColor: '#ECEEEB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeCookbookItemTitle: {
+    flex: 1,
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 17,
+  },
+  recipeCookbookCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#9BA1A7',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeCookbookCheckboxSelected: {
+    borderColor: '#7C97CC',
+    backgroundColor: '#7C97CC',
+  },
+  recipeCookbookFooter: {
+    borderTopWidth: 1,
+    borderTopColor: '#D7DADF',
+    paddingHorizontal: 28,
+    paddingTop: 22,
+    paddingBottom: 24,
+  },
+  recipeCookbookPrimaryButton: {
+    minHeight: 50,
+    borderRadius: 16,
+    backgroundColor: '#7C97CC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  recipeCookbookPrimaryButtonText: {
+    color: '#FFFFFF',
+    fontFamily: fonts.medium,
+    fontSize: 17,
+  },
+  newCookbookDialog: {
+    backgroundColor: '#FCFCFC',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E5E8',
+    overflow: 'hidden',
+    minHeight: 380,
+  },
+  newCookbookDialogHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 22,
+    paddingTop: 22,
+    paddingBottom: 16,
+  },
+  newCookbookDialogTitle: {
+    color: palette.accent,
+    fontFamily: fonts.bold,
+    fontSize: 24,
+    lineHeight: 31,
+  },
+  newCookbookDialogCloseButton: {
+    width: 30,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  newCookbookDialogDivider: {
+    height: 1,
+    backgroundColor: '#D7DADF',
+    marginBottom: 22,
+  },
+  newCookbookLabel: {
+    color: palette.accent,
+    fontFamily: fonts.medium,
+    fontSize: 14,
+    marginBottom: 8,
+    paddingHorizontal: 22,
+  },
+  newCookbookInput: {
+    marginHorizontal: 22,
+    borderWidth: 1,
+    borderColor: '#8EABDF',
+    borderRadius: 14,
+    backgroundColor: '#FFFDF8',
+    minHeight: 54,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    color: palette.accent,
+    fontFamily: fonts.regular,
+    fontSize: 16,
+  },
+  newCookbookPrimaryButton: {
+    marginTop: 'auto',
+    marginHorizontal: 28,
+    marginBottom: 24,
+    minHeight: 50,
+    borderRadius: 16,
+    backgroundColor: '#7C97CC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  newCookbookPrimaryButtonText: {
+    color: '#FFFFFF',
+    fontFamily: fonts.medium,
+    fontSize: 17,
   },
   planAssignRecipeName: {
     color: palette.accent,
@@ -10152,7 +10417,7 @@ const styles = StyleSheet.create({
   },
   recipeComposerTitleRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 16,
     paddingHorizontal: 16,
     paddingVertical: 16,
@@ -10162,8 +10427,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: '#D7D3CB',
   },
-  recipeComposerTitleInput: {
+  recipeComposerTitleContent: {
     flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  recipeComposerTitleInput: {
     color: palette.accent,
     fontFamily: fonts.bold,
     fontSize: 20,
@@ -10172,9 +10441,10 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
   },
   recipeComposerCookbookButton: {
-    width: 74,
+    width: 72,
     alignItems: 'center',
     gap: 6,
+    flexShrink: 0,
   },
   recipeComposerCookbookIcon: {
     width: 46,
